@@ -1,6 +1,6 @@
 # PaperWork
 
-> Turn confusing documents, images, and links into clear next steps—with evidence for every important claim.
+> Turn an offer-letter PDF into clear next steps—with evidence for every important claim.
 
 [![MIT license](https://img.shields.io/badge/license-MIT-164f3c.svg)](LICENSE)
 [![Project status: pre-alpha](https://img.shields.io/badge/status-pre--alpha-a56427.svg)](ROADMAP.md)
@@ -12,9 +12,19 @@ PaperWork is an open-source workspace for understanding consequential paperwork.
 
 ## Project status
 
-**PaperWork is currently a working sample experience, not a document analyzer.** You can explore upload and link staging, a pre-analysis data-flow receipt, an evidence-backed sample offer-letter plan, source citations, uncertainty labels, and responsive interactions. Selected file contents are not read or transmitted. OCR, AI analysis, citation validation, and production hosting are not connected yet.
+**PaperWork v0.1 now performs a narrow, real browser-local analysis.** It accepts
+PDF offer letters with selectable English text, extracts every page using a
+same-origin bundled PDF worker, creates immutable page-region segments, detects
+explicit offer terms with deterministic rules, and renders a plan only after
+citations, claim semantics, action safety, the event ledger, and the strict
+Action Pack contract all pass.
 
-That boundary is deliberate: the interface is public now so the community can inspect and shape the trust model before sensitive processing is introduced.
+It does not use an AI provider, upload document content to a PaperWork server,
+perform OCR, accept links/images/DOCX, or claim to analyze arbitrary document
+types. Scans, password-protected PDFs, partial extraction, overprinted or
+non-monotonic text ordering, and unsupported offer wording are
+safely withheld instead of producing a guess. This is an early milestone, not
+professional employment or legal advice.
 
 ## What PaperWork will give users
 
@@ -29,7 +39,10 @@ That boundary is deliberate: the interface is public now so the community can in
 
 ## Try it locally
 
-Requirements: Node.js 22.13 or later.
+Requirements: Node.js 22.13 or later. Browser analysis requires a current
+evergreen browser with module workers, Web Crypto, `structuredClone`, and
+`Promise.withResolvers`; PaperWork reports the local extractor as unavailable
+before reading file bytes when those capabilities are missing.
 
 ```bash
 git clone https://github.com/anshhu-man/paperwork.git
@@ -38,7 +51,11 @@ npm install
 npm run dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000), choose **Try a sample offer letter**, and inspect the sample Action Pack. Do not use a real confidential document yet; the current build cannot analyze it.
+Open [http://localhost:3000](http://localhost:3000), choose **Analyze the
+synthetic sample**, approve both local operations, and inspect its observed run
+receipt. You can then try a compatible PDF. Review the threat model before
+using a genuinely sensitive document; browser extensions, the device, and the
+host that serves application assets remain outside PaperWork's code boundary.
 
 ## Non-negotiable product rules
 
@@ -51,18 +68,30 @@ Open [http://localhost:3000](http://localhost:3000), choose **Try a sample offer
 
 ## Architecture and trust
 
-The current application uses React, TypeScript, Vinext, and a Cloudflare Worker-compatible build. It has no database, account system, telemetry, object storage, document parser, or AI API call.
+The application uses React, TypeScript, Vinext, and an exact-pinned
+`pdfjs-dist` browser worker. It has no database, account system, telemetry,
+object storage, document-processing backend, or AI API call.
 
-The repository now also contains the first versioned Action Pack transport
-contracts and adversarial runtime tests. Structural contract success is not a
-trust decision: parsed packs remain non-renderable until an independent
-semantic, action-safety, source-ledger, and event-ledger assembler is built.
+The only renderable domain object is `TrustedActionPackV1`. The public live
+entry point accepts a browser `File`; no public operation can mark an imported
+pack, model draft, receipt, or self-attested JSON object as trusted. A private
+WeakSet registers only the final deep-frozen clone after PaperWork independently
+rechecks canonical evidence spans, deterministic claim templates, normalized
+dates and money, conflict alternatives, allowlisted manual actions, the
+six-event local ledger (two local authorizations, source admission, extraction,
+analysis, and validation), and the strict runtime contract. Authorization is
+fresh, ordered, bound to a one-use run UUID, and recorded before file reading.
+Serialization,
+spreading, or cloning removes that identity-based trust.
 
 Read the contributor-facing [architecture](docs/ARCHITECTURE.md) and [privacy threat model](docs/PRIVACY-THREAT-MODEL.md) before changing the processing boundary. The [roadmap](ROADMAP.md) defines the gates for the first useful release.
 
 ## Help build it
 
-Useful early contributions include accessibility reviews, local PDF extraction, OCR with source coordinates, citation evaluation, privacy analysis, synthetic document fixtures, translations, and research into specific document types.
+Useful next contributions include accessibility reviews, adversarial PDF
+fixtures, browser network-isolation tests, safe OCR with source coordinates,
+citation evaluation, privacy analysis, translations, and additional narrow
+offer-letter layouts.
 
 - Start with an issue labeled [`good first issue`](https://github.com/anshhu-man/paperwork/labels/good%20first%20issue).
 - Propose a document type with the structured issue form.

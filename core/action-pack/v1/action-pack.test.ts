@@ -3,13 +3,12 @@ import { test } from 'node:test';
 
 import { offerLetterActionPackV1, offerLetterModelDraftV1 } from './fixtures/offer-letter';
 import {
-  assertTrustedActionPackV1,
-  isTrustedActionPackV1,
   parseActionPackV1,
   parseCanonicalSourceContextV1,
   parseModelDraftV1,
   type ContractIssueV1,
 } from './validate';
+import { assertTrustedActionPackV1, isTrustedActionPackV1 } from './trusted-assembler';
 
 type MutableRecord = Record<string, unknown>;
 type ParseResult =

@@ -11,7 +11,6 @@ import {
   type SourceRevisionV1,
   type SourceSegmentV1,
   type StructurallyValidActionPackV1,
-  type TrustedActionPackV1,
   type ValidatedActionV1,
   type ValidatedAnalysisV1,
   type ValidatedClaimV1,
@@ -1038,7 +1037,7 @@ function validateProcessingEvent(value: unknown, path: string, collector: IssueC
   integerAt(object.sequence, `${path}.sequence`, collector, 0, MAX.events);
   timestampAt(object.occurredAt, `${path}.occurredAt`, collector);
   enumAt(object.type, `${path}.type`, collector, [
-    'source_admitted', 'extraction_completed', 'payload_previewed', 'consent_recorded', 'transfer_started',
+    'local_read_authorized', 'local_plan_authorized', 'source_admitted', 'extraction_completed', 'payload_previewed', 'consent_recorded', 'transfer_started',
     'transfer_completed', 'analysis_completed', 'validation_completed', 'correction_recorded',
     'deletion_requested', 'deletion_reported', 'local_cleanup_completed', 'run_cancelled', 'run_failed',
   ] as const);
@@ -1050,7 +1049,7 @@ function validateProcessingEvent(value: unknown, path: string, collector: IssueC
   }
   if ('relatedId' in object) idAt(object.relatedId, `${path}.relatedId`, collector);
   const requiresRelatedId = [
-    'source_admitted', 'extraction_completed', 'payload_previewed', 'consent_recorded',
+    'local_read_authorized', 'local_plan_authorized', 'source_admitted', 'extraction_completed', 'payload_previewed', 'consent_recorded',
     'transfer_started', 'transfer_completed', 'analysis_completed', 'validation_completed',
     'correction_recorded', 'deletion_requested', 'deletion_reported', 'local_cleanup_completed',
   ].includes(object.type as string);
@@ -1599,7 +1598,8 @@ export function parseActionPackV1(input: unknown): ContractParseResultV1<Structu
         collector.add('$.createdAt', 'pack_time_order', 'Action Pack creation cannot precede its receipt.');
       }
       if (receipt && !sameStrings(receipt.correctionIds, correctionIds)) collector.add('$.receipt.correctionIds', 'correction_receipt_mismatch', 'Receipt correction IDs must exactly match the Action Pack correction ledger.');
-      if (object.runMode === 'sample_fixture' && receipt?.processingMode !== 'sample') collector.add('$.receipt.processingMode', 'run_mode_mismatch', 'Sample fixtures require sample receipt mode.');
+      // `runMode` describes whether the source bytes are a recognized fixture;
+      // `processingMode` independently records where this particular run occurred.
       if (object.runMode === 'live' && receipt?.processingMode === 'sample') collector.add('$.receipt.processingMode', 'run_mode_mismatch', 'Live runs cannot use sample receipt mode.');
     }
     stringArrayAt(object.limitations, '$.limitations', collector, { minimum: 1, maximum: 100, plainText: true });
@@ -1617,17 +1617,6 @@ export function isStructurallyValidActionPackV1(input: unknown): input is Struct
 
 /** @deprecated Prefer isStructurallyValidActionPackV1; shape validity is not trust. */
 export const isActionPackV1 = isStructurallyValidActionPackV1;
-
-const trustedActionPacksV1 = new WeakSet<object>();
-
-/**
- * External JSON and parseActionPackV1 results are intentionally never trusted.
- * A future PaperWork-owned assembler will register packs only after independent
- * semantic, action-safety, source-ledger, and event-ledger checks.
- */
-export function isTrustedActionPackV1(input: unknown): input is TrustedActionPackV1 {
-  return typeof input === 'object' && input !== null && trustedActionPacksV1.has(input);
-}
 
 export function formatContractIssuesV1(issues: readonly ContractIssueV1[]) {
   return issues.map((issue) => `${issue.path} [${issue.code}] ${issue.message}`).join('\n');
@@ -1648,17 +1637,10 @@ export function assertActionPackV1(input: unknown): asserts input is Structurall
   if (!result.success) throw new ActionPackContractErrorV1(result.issues);
 }
 
-export function assertTrustedActionPackV1(input: unknown): asserts input is TrustedActionPackV1 {
-  if (!isTrustedActionPackV1(input)) {
-    throw new Error('PaperWork refused to render an Action Pack without independent trusted-ledger assembly.');
-  }
-}
-
 export type {
   ActionPackV1,
   ModelDraftV1,
   StructurallyValidActionPackV1,
-  TrustedActionPackV1,
   ValidatedActionV1,
   ValidatedAnalysisV1,
 };

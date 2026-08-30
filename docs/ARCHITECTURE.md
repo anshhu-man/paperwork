@@ -4,24 +4,25 @@ PaperWork aims to turn supplied sources into an evidence-backed Action Pack
 while showing users what came from a source, what was inferred, what is only a
 suggestion, and where their data went.
 
-This document describes the current sample frontend, the implemented v1 trust
-contracts, and a proposed production architecture. Sections marked **Planned**
+This document describes the implemented v0.1 browser-local PDF path, the v1
+trust contracts, and later production boundaries. Sections marked **Planned**
 are not implemented.
 
 ## What exists today
 
-The repository contains one interactive React/TypeScript product prototype.
-It is a Next.js-compatible application built with Vinext and Vite and prepared
-for Cloudflare Worker-compatible hosting.
+The repository contains one interactive React/TypeScript application. It is a
+Next.js-compatible build using Vinext and Vite and is prepared for Cloudflare
+Worker-compatible hosting.
 
 | Capability | Current behavior |
 | --- | --- |
-| File input | Reads the selected file's name, MIME type, and size for display. It does not read file contents. |
-| Link input | Stores and displays the entered URL in page state. It does not fetch the URL. |
-| Processing | A timer advances through illustrative steps. No extraction, OCR, or analysis occurs. |
-| Results | A fixed sample offer-letter Action Pack is available only through the clearly labeled sample path. Live analysis of staged sources is not connected. |
-| Follow-up question | Returns a prepared sample answer; it does not inspect the question or source. |
-| Transparency receipt | Displays static facts about sample mode; it is not an audit-generated receipt or deletion proof. |
+| File input | Accepts one PDF up to 10 MB. MIME and extension are advisory; the extractor checks `%PDF-` bytes before parsing. |
+| Permission | Reads no bytes until the user authorizes local text extraction and then local Action Pack assembly. Fresh ordered timestamps are bound to a one-use run UUID and retained as the first two receipt events. |
+| Extraction | Exact-pinned `pdfjs-dist` runs in a same-origin module worker. All pages must yield meaningful native text; scans and partial results are withheld. |
+| Canonical source | Computes SHA-256 from the bytes and creates immutable line segments with page-region anchors and extraction provenance. |
+| Analysis | Deterministic English offer-letter rules recognize explicit role, deadline, start date, salary, location, and probation terms. No model or external knowledge is used. |
+| Results | The UI accepts only a privately registered `TrustedActionPackV1`; source facts, conflicts, unknowns, and suggestions remain distinct. |
+| Transparency receipt | Projects completed local events, components, validation counts, transfer records, and conservative retention state from the trusted pack. |
 | State | React component memory only. Task completion and other state disappear when the page lifecycle ends or reloads. |
 | External systems | No AI provider, application database, object storage, account service, or telemetry integration is configured. |
 
@@ -33,11 +34,20 @@ infrastructure logs outside this repository.
 
 ```text
 app/page.tsx
-  ├─ source selection and metadata display
-  ├─ sample review and processing states
-  ├─ bundled evidence and task fixtures
-  ├─ sample Action Pack interaction
-  └─ static transparency receipt and public-repository link
+  ├─ PDF selection and explicit local permissions
+  ├─ observed extraction/assembly progress and cancellation
+  ├─ trusted Action Pack view model
+  ├─ exact evidence, plan, source, failure, and receipt views
+  └─ synthetic PDF entry point and public-repository link
+
+core/local-analysis/v1/pdf.ts
+  ├─ byte admission, fingerprint, limits, worker lifecycle
+  └─ complete native-text extraction and canonical segments
+
+core/action-pack/v1/trusted-assembler.ts
+  ├─ deterministic offer-letter rules and independent checks
+  ├─ observed event/receipt construction and final authority gate
+  └─ private identity-based trust registration
 
 app/globals.css       product styling
 app/layout.tsx        application shell and metadata
@@ -47,10 +57,10 @@ next.config.ts        Next-compatible configuration
 
 The repository includes strict, versioned runtime contracts for canonical
 sources, model drafts, validated analyses, Action Packs, processing events,
-consent, transfers, corrections, and receipts in `core/action-pack/v1`. It does
-not yet include ingestion, extraction, model-provider, persistence, or server
-API modules. The current result UI still uses its presentation fixture while
-the validated domain bundle is integrated incrementally.
+consent, transfers, corrections, and receipts in `core/action-pack/v1`. It also
+includes the narrow local PDF extractor and trusted offer-letter assembler. It
+does not include OCR, model-provider, URL ingestion, persistence, or document
+processing server modules.
 
 ## Architectural invariants
 
@@ -70,21 +80,22 @@ Future contributions should preserve these rules:
 7. Adding persistence, telemetry, an AI provider, or an external source changes
    the threat model and requires updated disclosures and tests.
 
-## Planned production pipeline
+## Current local pipeline and planned extensions
 
-The following is a proposed separation of responsibilities, not current
-functionality:
+The browser-local PDF branch through the trusted Action Pack UI is implemented.
+Images, links, OCR, external providers, payload consent, and cloud modes remain
+planned extensions:
 
 ```text
 [Source adapters]
- files | images | links
+ PDF file (implemented) | images and links (planned)
           |
           v
 [Ingestion policy]
  type, signature, size, page and URL safety checks
           |
           v
-[Isolated extraction/OCR]
+[Local native-text extraction | isolated OCR planned]
           |
           v
 [Normalized source model]
@@ -93,10 +104,11 @@ functionality:
           +------------------------+
           |                        |
           v                        v
-[Consent/payload preview]     [Source viewer]
+[Consent/payload preview]     [Evidence view]
+  (external mode planned)       (implemented)
           |
           v
-[Provider-neutral analyzer]  (optional external trust boundary)
+[Deterministic local rules] or [provider-neutral analyzer planned]
           |
           v
 [Structured claim graph]
@@ -110,10 +122,10 @@ functionality:
 [Action Pack UI]          [Event-derived analysis receipt]
 ```
 
-Whether extraction or analysis runs in a browser, a desktop process, a
-PaperWork service, or a third-party provider is intentionally undecided here.
-Each shipped mode must document its real execution location and network path;
-contributors must not label a mode "local" merely because its UI is local.
+The shipped v0.1 path runs extraction and deterministic analysis in the
+browser. Future desktop, PaperWork-service, or third-party provider modes must
+document their real execution location and network path; contributors must not
+label a mode "local" merely because its UI is local.
 
 ## Implemented v1 domain contracts
 
@@ -137,19 +149,20 @@ strict ActionPackV1 parser
 structurally valid transport data
         |
         v
-trusted-ledger assembler (not implemented)
+trusted local assembler + final authority gate
         |
         v
 TrustedActionPackV1 -> renderable domain data
 ```
 
-The model may propose claims, actions, questions, and section membership. It
-cannot author canonical source records, claim validation attestations, consent,
-transfer history, retention status, corrections, or receipts. Unknown fields
-are rejected rather than ignored. Structural parsing never turns external JSON
-into trusted render input; only a PaperWork-owned assembler may do that after
-independent semantic-support, action-safety, canonical-source, and event-ledger
-checks. That assembler is intentionally still unavailable.
+A future model may propose claims, actions, questions, and section membership.
+It cannot author canonical source records, claim validation attestations,
+consent, transfer history, retention status, corrections, or receipts. Unknown
+fields are rejected rather than ignored. Structural parsing never turns
+external JSON into trusted render input. The implemented assembler registers
+only the final deep-frozen local pack after independent semantic-support,
+action-safety, canonical-source, and event-ledger checks. No registration
+primitive is exported.
 
 - `SourceDescriptor`: user-visible identity, media type, size, origin, and a
   source fingerprint.
@@ -207,14 +220,21 @@ Provider output is untrusted. It must not be rendered as HTML, execute tools,
 change privacy settings, create external requests, or bypass citation
 validation.
 
-## Planned receipt architecture
+## Receipt architecture
 
-The current transparency modal is static sample UI. A production receipt should
-be generated only from `ProcessingEvent` records emitted by completed stages.
-It should identify sources by user-readable names and privacy-conscious
-fingerprints, record software/model/template versions, list transfers and
-external references, summarize evidence validation, and attribute retention or
-deletion statements to the system that reported them.
+The current local receipt is generated from completed `ProcessingEvent` records
+and the final trusted pack. It identifies the source by user-readable name and
+SHA-256 fingerprint, records parser/rules/validator versions, lists transfers
+and external references, summarizes validation, and conservatively reports
+browser retention as `status_unavailable`. Future provider and deletion modes
+must preserve this observed-event rule.
+
+A successful local receipt has six contiguous browser observations:
+`local_read_authorized`, `local_plan_authorized`, `source_admitted`,
+`extraction_completed`, `analysis_completed`, and `validation_completed`.
+Both authorization events identify the same run UUID; the assembler rejects
+stale, future, reversed, malformed, or replayed authorization before reading
+file bytes.
 
 Deletion should be a state machine rather than a boolean, for example:
 
@@ -242,10 +262,10 @@ ui/            source review, payload consent, evidence viewer, and Action Pack
 evals/         citation, extraction, injection, privacy, and regression suites
 ```
 
-Only `core/action-pack/v1` exists from this target organization today. The
-remaining directories are proposed. Interfaces should permit fake providers
-and fixture sources so privacy and evidence behavior can be tested without
-transmitting real documents.
+`core/action-pack/v1` and `core/local-analysis/v1` exist today. The remaining
+directories are proposed. Interfaces should permit fake providers and fixture
+sources so privacy and evidence behavior can be tested without transmitting
+real documents.
 
 ## Contributor checklist
 

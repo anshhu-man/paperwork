@@ -313,6 +313,8 @@ export interface ProcessingEventV1 {
   readonly sequence: number;
   readonly occurredAt: string;
   readonly type:
+    | 'local_read_authorized'
+    | 'local_plan_authorized'
     | 'source_admitted'
     | 'extraction_completed'
     | 'payload_previewed'

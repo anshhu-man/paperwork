@@ -7,13 +7,37 @@ with the words in the document.
 
 ## Now — v0.1: offer-letter analysis
 
+### Milestone achieved — native-text PDF + trusted local assembler
+
+- [x] Accept one real PDF, verify its byte signature, cap it at 10 MB and 50
+  pages, compute SHA-256, and extract every page in a same-origin browser worker.
+- [x] Preserve immutable native-text segments with exact UTF-16 evidence spans,
+  normalized page regions, parser version, and observed extraction events.
+- [x] Recognize a deliberately narrow set of explicit English offer terms with
+  deterministic rules; detect conflicting probation durations and withhold
+  scans, partial extraction, ambiguous/unsupported documents, and unsafe text.
+- [x] Independently verify claim templates, typed dates/money/durations,
+  citations, allowlisted manual-only actions, and the six-event local ledger,
+  including two fresh one-use local authorization observations before reading.
+- [x] Register only the final parsed and frozen Action Pack in a private trust
+  registry. Imported, parsed, serialized, spread, or cloned packs remain
+  non-renderable.
+- [x] Render sample and user PDFs through the same trusted view-model boundary,
+  with explicit local permissions, real progress/cancellation, safe failures,
+  exact evidence, and an observed run receipt.
+- [x] Recognize the public synthetic PDF by its immutable byte fingerprint,
+  preserve `sample_fixture` provenance even after manual re-upload, and replace
+  executable-looking document requirements with a do-not-submit sample action.
+
+The remaining v0.1 release gates below still apply before broad promotion.
+
 ### Real analysis path
 
-- Accept a real PDF offer letter and a clear image or scan. Keep the existing
-  sample flow available so anyone can evaluate the product without sharing a
-  private document.
-- Extract text and page locations, report unreadable areas, and let the user
-  review or correct OCR before analysis.
+- Extend the implemented real native-text PDF path to a clear image or scan.
+  Keep the real synthetic-PDF flow available so anyone can evaluate the product
+  without sharing a private document.
+- Add OCR with page locations, report unreadable areas, and let the user review
+  or correct OCR before analysis.
 - Produce a structured Offer Letter Action Pack:
   - what the document is and whether action is required;
   - role, employer, location, start date, compensation, probation, notice

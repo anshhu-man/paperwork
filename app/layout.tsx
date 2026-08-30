@@ -16,11 +16,11 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   metadataBase: new URL(siteOrigin),
-  title: 'PaperWork — Understand any paper',
-  description: 'Turn confusing documents, images, and links into clear, evidence-backed action plans.',
+  title: 'PaperWork — Local, evidence-backed offer-letter plans',
+  description: 'Read an offer-letter PDF in your browser and get a trusted action plan with exact citations and no document upload.',
   openGraph: {
     title: 'PaperWork',
-    description: 'From confusing paper to clear next steps.',
+    description: 'Browser-local offer-letter analysis with exact citations and no document upload.',
     url: '/',
     siteName: 'PaperWork',
     images: [{ url: '/og.jpg', width: 1200, height: 630, alt: 'PaperWork — From confusing paper to clear next steps.' }],
@@ -29,7 +29,7 @@ export const metadata: Metadata = {
   twitter: {
     card: 'summary_large_image',
     title: 'PaperWork',
-    description: 'From confusing paper to clear next steps.',
+    description: 'Browser-local offer-letter analysis with exact citations and no document upload.',
     images: ['/og.jpg'],
   },
 };

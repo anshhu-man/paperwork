@@ -1,174 +1,200 @@
 'use client';
 
-import { ChangeEvent, DragEvent, FormEvent, useEffect, useRef, useState } from 'react';
+import {
+  type ChangeEvent,
+  type DragEvent,
+  useEffect,
+  useRef,
+  useState,
+} from 'react';
 
-type Phase = 'home' | 'review' | 'processing' | 'result';
-type Source = { name: string; meta: string; kind: 'file' | 'link'; sample?: boolean };
-type EvidenceKind = 'source' | 'inference' | 'suggestion' | 'unconfirmed';
+import {
+  analyzeLocalOfferLetterPdfV1,
+  toActionPackViewModelV1,
+  type ActionPackViewModelV1,
+  type ClaimViewModelV1,
+  type LocalAnalysisIssueCodeV1,
+  type LocalAnalysisProgressV1,
+  type LocalRunAuthorizationV1,
+  type TrustedActionPackV1,
+} from '@/core/action-pack/v1';
 
-type Evidence = {
-  id: string;
-  kind: EvidenceKind;
-  label: string;
-  title: string;
-  quote: string;
-  location: string;
-  rationale: string;
+type ResultTab = 'overview' | 'plan' | 'sources';
+
+interface StagedPdf {
+  readonly file: File;
+  readonly name: string;
+  readonly meta: string;
+  readonly sample: boolean;
+}
+
+interface LocalApprovals {
+  readonly readApprovedAt?: string;
+  readonly planApprovedAt?: string;
+}
+
+type WorkflowState =
+  | { readonly tag: 'home' }
+  | { readonly tag: 'review'; readonly source: StagedPdf; readonly approvals: LocalApprovals }
+  | {
+      readonly tag: 'processing';
+      readonly source: StagedPdf;
+      readonly authorization: LocalRunAuthorizationV1;
+      readonly progress: LocalAnalysisProgressV1;
+    }
+  | {
+      readonly tag: 'result';
+      readonly source: StagedPdf;
+      readonly pack: TrustedActionPackV1;
+      readonly view: ActionPackViewModelV1;
+    }
+  | {
+      readonly tag: 'failure';
+      readonly source: StagedPdf;
+      readonly code: LocalAnalysisIssueCodeV1;
+    };
+
+const FAILURE_COPY: Readonly<Record<LocalAnalysisIssueCodeV1, { title: string; detail: string }>> = {
+  empty_file: { title: 'This PDF is empty.', detail: 'PaperWork did not read or analyze any content. Choose a non-empty PDF.' },
+  file_too_large: { title: 'This PDF is over the 10 MB limit.', detail: 'Nothing was analyzed. Choose a smaller PDF for this browser-local milestone.' },
+  unsupported_file_type: { title: 'This file is not a valid PDF.', detail: 'PaperWork checks the actual file signature, not only its name or extension.' },
+  page_limit_exceeded: { title: 'This PDF has more than 50 pages.', detail: 'No Action Pack was created. Split the document and try the relevant section.' },
+  password_required: { title: 'This PDF is password-protected.', detail: 'PaperWork did not extract its contents. Remove the password and try again.' },
+  malformed_pdf: { title: 'This PDF appears to be damaged.', detail: 'The local parser could not safely complete every page, so PaperWork withheld the plan.' },
+  unsupported_pdf: { title: 'This PDF uses an unsupported feature.', detail: 'PaperWork stopped locally instead of producing a partial or uncertain result.' },
+  ocr_required: { title: 'No complete selectable text was found.', detail: 'Scanned PDFs need OCR, which is deliberately not enabled in this milestone.' },
+  extraction_limit_exceeded: { title: 'The extracted text exceeded the safe limit.', detail: 'PaperWork stopped before assembly and did not create an Action Pack.' },
+  cancelled: { title: 'Local analysis was cancelled.', detail: 'No Action Pack was created and no document content was transferred.' },
+  timed_out: { title: 'Local extraction took too long.', detail: 'PaperWork stopped after 30 seconds instead of trusting incomplete output.' },
+  extractor_unavailable: { title: 'The local PDF worker could not start.', detail: 'Your PDF stayed in this tab. Reload and try again in a modern browser.' },
+  invalid_extractor_output: { title: 'The extracted source ledger was rejected.', detail: 'PaperWork could not prove a complete canonical source, so it showed no plan.' },
+  extraction_failed: { title: 'Local extraction could not finish.', detail: 'No document content left this tab, and no partial result was shown.' },
+  authorization_required: { title: 'Local permission is required.', detail: 'Approve both local steps before PaperWork reads the PDF.' },
+  unsupported_document: { title: 'This does not look like a supported offer letter.', detail: 'The first ruleset only handles explicit English-language employment offers.' },
+  required_term_not_found: { title: 'Required offer terms were not found.', detail: 'PaperWork needs an explicit offered role and a sign-and-return instruction before it can build this plan.' },
+  unsafe_source_value: { title: 'A source value could not be rendered safely.', detail: 'PaperWork withheld the entire Action Pack instead of interpolating unsafe source text.' },
+  claim_validation_failed: { title: 'A claim did not pass independent verification.', detail: 'PaperWork refused to render a statement that could not be reconstructed from its exact citation.' },
+  action_safety_failed: { title: 'An action failed the safety policy.', detail: 'No plan was shown because every action must match a fixed, manual-only template.' },
+  event_ledger_failed: { title: 'The run receipt could not be verified.', detail: 'PaperWork requires a complete, ordered local event ledger before it trusts a result.' },
+  contract_validation_failed: { title: 'The Action Pack contract was rejected.', detail: 'The result stayed hidden because structural validity is required in addition to semantic trust.' },
+  assembly_failed: { title: 'Trusted assembly could not finish.', detail: 'PaperWork showed no partial plan. Your selected PDF remains only in this page session.' },
 };
 
-type SampleAnswer = {
-  kind: EvidenceKind;
-  label: string;
-  text: string;
-  evidence?: string;
-};
+const PROGRESS_STEPS = [
+  { stage: 'opening', label: 'Check bytes and open the local PDF worker' },
+  { stage: 'extracting', label: 'Extract every page into cited source segments' },
+  { stage: 'assembling', label: 'Build claims and manual-only actions' },
+  { stage: 'validating', label: 'Verify citations, safety and the run ledger' },
+] as const;
 
-const evidence: Record<string, Evidence> = {
-  role: {
-    id: 'role', kind: 'source', label: 'From your source', title: 'Offered role',
-    quote: 'We are pleased to offer you the position of Software Engineer.',
-    location: 'Page 1 · Opening paragraph',
-    rationale: 'The offered role is directly stated in the prepared sample letter.',
-  },
-  deadline: {
-    id: 'deadline', kind: 'source', label: 'From your source', title: 'Acceptance deadline',
-    quote: 'Please sign and return a copy of this letter no later than 5 September 2026.',
-    location: 'Page 3 · Paragraph 2',
-    rationale: 'The document directly states the date by which the signed letter must be returned.',
-  },
-  notice: {
-    id: 'notice', kind: 'source', label: 'From your source', title: 'Notice period',
-    quote: 'Following confirmation, either party may terminate employment by providing 90 days written notice.',
-    location: 'Page 2 · Clause 7',
-    rationale: 'The 90-day obligation is explicitly stated in the termination clause.',
-  },
-  salaryAmount: {
-    id: 'salaryAmount', kind: 'source', label: 'From your source', title: 'Annual compensation',
-    quote: 'Your annual cost to company will be ₹12,00,000 as detailed in Annexure B.',
-    location: 'Page 1 · Compensation',
-    rationale: 'The annual cost-to-company amount is directly stated in the compensation section.',
-  },
-  salaryAnnexure: {
-    id: 'salaryAnnexure', kind: 'inference', label: 'PaperWork inference', title: 'Compensation annexure appears to be missing',
-    quote: 'Your annual cost to company will be ₹12,00,000 as detailed in Annexure B.',
-    location: 'Page 1 · Compensation',
-    rationale: 'The source refers to Annexure B, but that annexure is not present in the prepared sample source set.',
-  },
-  locationStated: {
-    id: 'locationStated', kind: 'source', label: 'From your source', title: 'Initial work location',
-    quote: 'Your initial place of work will be Bengaluru or another company location as required.',
-    location: 'Page 1 · Paragraph 4',
-    rationale: 'The letter directly names Bengaluru while allowing another company location to be required.',
-  },
-  remotePolicy: {
-    id: 'remotePolicy', kind: 'unconfirmed', label: 'Not confirmed', title: 'Remote or hybrid policy',
-    quote: 'Your initial place of work will be Bengaluru or another company location as required.',
-    location: 'Page 1 · Paragraph 4',
-    rationale: 'The sourced location is clear, but this passage does not confirm whether remote or hybrid work is permitted.',
-  },
-  receipt: {
-    id: 'receipt', kind: 'suggestion', label: 'Suggested next step', title: 'Confirm receipt after signing',
-    quote: 'Please sign and return a copy of this letter no later than 5 September 2026.',
-    location: 'Based on Page 3 · Paragraph 2',
-    rationale: 'The source specifies a deadline but does not explain how receipt will be acknowledged.',
-  },
-};
+function fileMeta(file: File) {
+  const size = file.size < 1024 * 1024
+    ? `${Math.max(1, Math.round(file.size / 1024))} KB`
+    : `${(file.size / 1024 / 1024).toFixed(1)} MB`;
+  return `PDF · ${size}`;
+}
 
-const fixtureClaimCount = Object.keys(evidence).length;
-const sourcedClaimCount = Object.values(evidence).filter((item) => item.kind === 'source').length;
-const reviewClaimCount = Object.values(evidence).filter((item) => item.kind === 'inference' || item.kind === 'unconfirmed').length;
+function formatDate(value?: string) {
+  if (!value) return undefined;
+  const date = new Date(`${value}T00:00:00Z`);
+  if (Number.isNaN(date.valueOf())) return value;
+  return new Intl.DateTimeFormat('en', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' }).format(date);
+}
 
-const tasks = [
-  { id: 1, priority: 'Do first', title: 'Request the missing compensation annexure', detail: 'The offer refers to Annexure B, but it is not included in the prepared sample sources.', due: 'Before accepting', evidence: 'salaryAnnexure' },
-  { id: 2, priority: 'Important', title: 'Confirm the work-location policy', detail: 'The letter names Bengaluru or another company location, but does not state whether remote or hybrid work is allowed.', due: 'Before 5 Sep', evidence: 'remotePolicy' },
-  { id: 3, priority: 'Review', title: 'Review the 90-day notice clause', detail: 'The letter says the notice period applies “following confirmation.” Review that wording before accepting.', due: 'Before accepting', evidence: 'notice' },
-  { id: 4, priority: 'Required', title: 'Sign and return the offer letter', detail: 'The letter requires a signed copy to be returned by the stated deadline.', due: '5 Sep 2026', evidence: 'deadline' },
-  { id: 5, priority: 'Optional', title: 'Ask for written confirmation of receipt', detail: 'PaperWork suggests asking the employer to confirm that the signed copy arrived.', due: 'After sending', evidence: 'receipt' },
-];
+function formatTime(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.valueOf())) return value;
+  return new Intl.DateTimeFormat('en', { dateStyle: 'medium', timeStyle: 'short' }).format(date);
+}
 
-const sampleAnswers: Record<string, SampleAnswer> = {
-  'Draft an email asking for Annexure B': {
-    kind: 'suggestion',
-    label: 'Prepared sample draft',
-    text: 'Subject: Request for Annexure B\n\nThank you for sharing the offer letter. Before I respond, could you please send the referenced Annexure B with the compensation breakdown?',
-    evidence: 'salaryAnnexure',
-  },
-  'What am I missing?': {
-    kind: 'inference',
-    label: 'Prepared sample answer',
-    text: 'The prepared source set does not include Annexure B, even though the compensation clause refers to it.',
-    evidence: 'salaryAnnexure',
-  },
-  'Explain the notice period': {
-    kind: 'unconfirmed',
-    label: 'Prepared sample answer',
-    text: 'The sample letter states that, “following confirmation,” either party may end employment with 90 days’ written notice. This excerpt does not define confirmation as probation confirmation.',
-    evidence: 'notice',
-  },
-};
-
-const processingSteps = [
-  'Loading the prepared sample source',
-  'Loading its prepared dates, amounts and duties',
-  'Showing source facts and PaperWork suggestions separately',
-  'Linking prepared claims to sample passages',
-  'Opening the sample action plan',
-];
-
-function Brand() {
+function Brand({ onHome }: { readonly onHome: () => void }) {
   return (
-    <button className="brand brand-button" onClick={() => window.location.reload()} aria-label="PaperWork home">
+    <button className="brand brand-button" onClick={onHome} aria-label="PaperWork home">
       <span className="brand-mark" aria-hidden="true">P</span>
       <span>PaperWork</span>
     </button>
   );
 }
 
-function TrustBadge({ compact = false }: { compact?: boolean }) {
+function TrustBadge({ compact = false }: { readonly compact?: boolean }) {
   return (
     <span className={`trust-badge ${compact ? 'compact' : ''}`}>
-      <span className="status-dot" /> Private session · no document content sent
+      <span className="status-dot" /> Browser-local · no PDF transfer
     </span>
   );
 }
 
+function EvidencePanel({ claim }: { readonly claim?: ClaimViewModelV1 }) {
+  if (!claim) {
+    return (
+      <aside className="evidence-panel source_fact">
+        <p className="side-label">Evidence</p>
+        <h2>Select a fact or action.</h2>
+        <p className="evidence-location">Its exact extracted passage will appear here.</p>
+      </aside>
+    );
+  }
+  return (
+    <aside className={`evidence-panel ${claim.provenance}`}>
+      <div className="evidence-panel-head">
+        <p className="side-label">Evidence</p>
+        <span className={`evidence-chip ${claim.provenance}`}>● {claim.label}</span>
+      </div>
+      <h2>{claim.title}</h2>
+      {claim.quotes.length > 0 ? claim.quotes.map((quote, index) => (
+        <div className="evidence-quote" key={`${claim.id}.${index}`}>
+          <blockquote>“{quote.quote}”</blockquote>
+          <p className="evidence-location">{quote.location}</p>
+        </div>
+      )) : <p className="evidence-location">No passage directly states this. It is deliberately labelled {claim.label.toLowerCase()}.</p>}
+      <div className="evidence-explain"><small>Why you are seeing this</small><p>{claim.rationale}</p></div>
+      <dl className="evidence-meta">
+        <div><dt>Validation</dt><dd>{claim.validationState === 'accepted' ? 'Accepted' : 'Needs review'}</dd></div>
+        <div><dt>Validator</dt><dd>{claim.validatorVersion}</dd></div>
+        <div><dt>Checked</dt><dd>{formatTime(claim.validatedAt)}</dd></div>
+      </dl>
+    </aside>
+  );
+}
+
 export default function Home() {
-  const [phase, setPhase] = useState<Phase>('home');
-  const [sourceMode, setSourceMode] = useState<'upload' | 'link'>('upload');
-  const [source, setSource] = useState<Source | null>(null);
-  const [linkValue, setLinkValue] = useState('');
-  const [intent, setIntent] = useState('Guide me');
-  const [progress, setProgress] = useState(0);
-  const [checked, setChecked] = useState<number[]>([]);
-  const [activeEvidence, setActiveEvidence] = useState<Evidence>(evidence.salaryAnnexure);
+  const [workflow, setWorkflow] = useState<WorkflowState>({ tag: 'home' });
   const [showFlow, setShowFlow] = useState(false);
-  const [resultTab, setResultTab] = useState<'overview' | 'plan' | 'sources'>('overview');
-  const [question, setQuestion] = useState('');
-  const [answer, setAnswer] = useState<SampleAnswer | null>(null);
+  const [resultTab, setResultTab] = useState<ResultTab>('overview');
+  const [checkedActions, setCheckedActions] = useState<readonly string[]>([]);
+  const [activeClaimId, setActiveClaimId] = useState<string>();
+  const [intakeError, setIntakeError] = useState<string>();
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const abortRef = useRef<AbortController | undefined>(undefined);
+  const activeRunRef = useRef<string | undefined>(undefined);
 
-  useEffect(() => {
-    if (phase !== 'processing') return;
-    const timer = window.setInterval(() => {
-      setProgress((current) => {
-        if (current >= processingSteps.length - 1) {
-          window.clearInterval(timer);
-          window.setTimeout(() => setPhase('result'), 520);
-          return current;
-        }
-        return current + 1;
-      });
-    }, 520);
-    return () => window.clearInterval(timer);
-  }, [phase]);
+  useEffect(() => () => abortRef.current?.abort(), []);
 
-  function stageFile(file?: File) {
+  const source = workflow.tag === 'home' ? undefined : workflow.source;
+  const result = workflow.tag === 'result' ? workflow : undefined;
+  const activeClaim = result?.view.claims.find((claim) => claim.id === activeClaimId);
+
+  function resetSession() {
+    abortRef.current?.abort();
+    abortRef.current = undefined;
+    activeRunRef.current = undefined;
+    setCheckedActions([]);
+    setActiveClaimId(undefined);
+    setResultTab('overview');
+    setIntakeError(undefined);
+    if (fileInputRef.current) fileInputRef.current.value = '';
+    setWorkflow({ tag: 'home' });
+  }
+
+  function stageFile(file?: File, sample = false) {
     if (!file) return;
-    const size = file.size > 1024 * 1024
-      ? `${(file.size / 1024 / 1024).toFixed(1)} MB`
-      : `${Math.max(1, Math.round(file.size / 1024))} KB`;
-    setSource({ name: file.name, meta: `${file.type || 'Document'} · ${size}`, kind: 'file' });
-    setPhase('review');
+    setIntakeError(undefined);
+    if (!/\.pdf$/i.test(file.name) && file.type !== 'application/pdf') {
+      setIntakeError('Choose a PDF file. PaperWork verifies its real file signature before reading it.');
+      return;
+    }
+    const staged: StagedPdf = { file, name: file.name, meta: `${fileMeta(file)}${sample ? ' · Synthetic sample' : ''}`, sample };
+    setWorkflow({ tag: 'review', source: staged, approvals: {} });
   }
 
   function onFileChange(event: ChangeEvent<HTMLInputElement>) {
@@ -180,356 +206,246 @@ export default function Home() {
     stageFile(event.dataTransfer.files?.[0]);
   }
 
-  function stageLink(event: FormEvent) {
-    event.preventDefault();
-    const trimmed = linkValue.trim();
-    if (!trimmed) return;
-    setSource({ name: trimmed.replace(/^https?:\/\//, '').slice(0, 62), meta: 'Public web link', kind: 'link' });
-    setPhase('review');
+  async function useSample() {
+    setIntakeError(undefined);
+    try {
+      const response = await fetch('/samples/Northstar_Offer_Letter.pdf');
+      if (!response.ok) throw new Error('sample unavailable');
+      const blob = await response.blob();
+      stageFile(new File([blob], 'Northstar_Offer_Letter.pdf', { type: 'application/pdf' }), true);
+    } catch {
+      setIntakeError('The synthetic sample could not be loaded. You can still choose your own PDF.');
+    }
   }
 
-  function useSample() {
-    setSource({ name: 'Northstar_Offer_Letter.pdf', meta: 'PDF · 3 pages · Sample', kind: 'file', sample: true });
-    setChecked([]);
-    setQuestion('');
-    setAnswer(null);
-    setActiveEvidence(evidence.salaryAnnexure);
-    setResultTab('overview');
-    setPhase('review');
-  }
-
-  function openEvidence(id: string) {
-    setActiveEvidence(evidence[id]);
-  }
-
-  function startProcessing() {
-    if (!source?.sample) return;
-    setProgress(0);
-    setPhase('processing');
-  }
-
-  function askPaperWork(event: FormEvent) {
-    event.preventDefault();
-    if (!question.trim()) return;
-    const preparedAnswer = sampleAnswers[question.trim()];
-    setAnswer(preparedAnswer ?? {
-      kind: 'unconfirmed',
-      label: 'Live Q&A not connected',
-      text: 'Live question analysis is not available in this build. Choose one of the prepared sample prompts to preview the interaction.',
+  function updateApproval(key: 'readApprovedAt' | 'planApprovedAt', checked: boolean) {
+    setWorkflow((current) => {
+      if (current.tag !== 'review') return current;
+      if (key === 'readApprovedAt' && !checked) return { ...current, approvals: {} };
+      if (key === 'planApprovedAt' && checked && !current.approvals.readApprovedAt) return current;
+      return { ...current, approvals: { ...current.approvals, [key]: checked ? new Date().toISOString() : undefined } };
     });
+  }
+
+  async function startLocalAnalysis() {
+    if (workflow.tag !== 'review' || !workflow.approvals.readApprovedAt || !workflow.approvals.planApprovedAt) return;
+    const runId = crypto.randomUUID();
+    const authorization: LocalRunAuthorizationV1 = {
+      runId,
+      readApprovedAt: workflow.approvals.readApprovedAt,
+      planApprovedAt: workflow.approvals.planApprovedAt,
+    };
+    const controller = new AbortController();
+    abortRef.current = controller;
+    activeRunRef.current = runId;
+    const stagedSource = workflow.source;
+    setWorkflow({ tag: 'processing', source: stagedSource, authorization, progress: { stage: 'opening' } });
+
+    const analysis = await analyzeLocalOfferLetterPdfV1(stagedSource.file, {
+      authorization,
+      signal: controller.signal,
+      onProgress: (progress) => {
+        if (activeRunRef.current !== runId) return;
+        setWorkflow((current) => current.tag === 'processing' && current.authorization.runId === runId
+          ? { ...current, progress }
+          : current);
+      },
+    });
+    if (activeRunRef.current !== runId) return;
+    activeRunRef.current = undefined;
+    abortRef.current = undefined;
+    if (analysis.ok) {
+      const view = toActionPackViewModelV1(analysis.pack);
+      const firstClaim = view.attention.find((claim) => claim.provenance === 'conflict') ?? view.facts[0] ?? view.claims[0];
+      setActiveClaimId(firstClaim?.id);
+      setCheckedActions([]);
+      setResultTab('overview');
+      setWorkflow({ tag: 'result', source: stagedSource, pack: analysis.pack, view });
+      return;
+    }
+    if (analysis.stage === 'cancelled') {
+      setWorkflow({ tag: 'review', source: stagedSource, approvals: {} });
+      return;
+    }
+    setWorkflow({ tag: 'failure', source: stagedSource, code: analysis.issues[0].code });
+  }
+
+  function cancelAnalysis() {
+    if (workflow.tag !== 'processing') return;
+    activeRunRef.current = undefined;
+    abortRef.current?.abort();
+    abortRef.current = undefined;
+    setWorkflow({ tag: 'review', source: workflow.source, approvals: {} });
+  }
+
+  function retryFromFailure() {
+    if (workflow.tag !== 'failure') return;
+    setWorkflow({ tag: 'review', source: workflow.source, approvals: {} });
+  }
+
+  function toggleAction(id: string) {
+    setCheckedActions((current) => current.includes(id) ? current.filter((actionId) => actionId !== id) : [...current, id]);
+  }
+
+  function openClaim(id: string) {
+    setActiveClaimId(id);
+    setResultTab('overview');
   }
 
   return (
     <main className="min-h-screen bg-paper text-ink">
-      {phase === 'home' && (
+      {workflow.tag === 'home' && (
         <>
           <header className="site-header">
-            <Brand />
+            <Brand onHome={resetSession} />
             <nav className="header-nav" aria-label="Primary navigation">
               <a href="#how-it-works">How it works</a>
               <button onClick={() => setShowFlow(true)}>Transparency</button>
               <a className="github-link" href="https://github.com/anshhu-man/paperwork" target="_blank" rel="noreferrer">Open source <span aria-hidden="true">↗</span></a>
             </nav>
           </header>
-
           <section className="hero-shell">
             <div className="hero-copy">
-              <p className="eyebrow"><span className="status-dot" /> Private by design · Open source</p>
+              <p className="eyebrow"><span className="status-dot" /> Local-first · Open source</p>
               <h1>From confusing paper<br />to clear next steps.</h1>
-              <p className="hero-lede">Add a document, image, or link. PaperWork explains what it means, finds what matters, and builds an action plan backed by evidence.</p>
+              <p className="hero-lede">Add an offer-letter PDF. PaperWork reads every page in your browser and builds a verified action plan with exact citations.</p>
             </div>
-
-            <div className="workspace-preview" aria-label="Add a source to PaperWork">
+            <div className="workspace-preview" aria-label="Add a PDF to PaperWork">
               <div className="upload-card">
-                <div className="upload-tabs" role="tablist" aria-label="Source type">
-                  <button className={`upload-tab ${sourceMode === 'upload' ? 'active' : ''}`} onClick={() => setSourceMode('upload')} role="tab" aria-selected={sourceMode === 'upload'}>Upload</button>
-                  <button className={`upload-tab ${sourceMode === 'link' ? 'active' : ''}`} onClick={() => setSourceMode('link')} role="tab" aria-selected={sourceMode === 'link'}>Paste a link</button>
+                <div className="upload-tabs"><span className="upload-tab active">Local PDF</span><span className="local-only-label">No cloud upload</span></div>
+                <div className="drop-zone" onDragOver={(event) => event.preventDefault()} onDrop={onDrop}>
+                  <span className="file-glyph" aria-hidden="true"><span /></span>
+                  <h2>Drop your offer letter here</h2>
+                  <p>PDF · Up to 10 MB and 50 pages · Native text only</p>
+                  <button className="primary-button" onClick={() => fileInputRef.current?.click()}>Choose a PDF</button>
+                  <input ref={fileInputRef} className="visually-hidden" type="file" accept="application/pdf,.pdf" onChange={onFileChange} />
                 </div>
-
-                {sourceMode === 'upload' ? (
-                  <div className="drop-zone" onDragOver={(event) => event.preventDefault()} onDrop={onDrop}>
-                    <span className="file-glyph" aria-hidden="true"><span /></span>
-                    <h2>Drop your paper here</h2>
-                    <p>PDF, DOCX, PNG or JPG · Up to 25 MB</p>
-                    <button className="primary-button" onClick={() => fileInputRef.current?.click()}>Choose a file</button>
-                    <input ref={fileInputRef} className="visually-hidden" type="file" accept=".pdf,.doc,.docx,.txt,.png,.jpg,.jpeg" onChange={onFileChange} />
-                  </div>
-                ) : (
-                  <form className="link-zone" onSubmit={stageLink}>
-                    <span className="link-symbol" aria-hidden="true">↗</span>
-                    <h2>Paste a public link</h2>
-                    <p>PaperWork will use the page as a source and preserve its URL as evidence.</p>
-                    <label className="visually-hidden" htmlFor="source-url">Source URL</label>
-                    <div className="link-input-row">
-                      <input id="source-url" type="url" placeholder="https://example.org/document" value={linkValue} onChange={(event) => setLinkValue(event.target.value)} />
-                      <button className="primary-button" type="submit">Add link</button>
-                    </div>
-                  </form>
-                )}
-
-                <div className="example-row">
-                  <span>Not ready to upload?</span>
-                  <button className="text-button" onClick={useSample}>Try a sample offer letter <span aria-hidden="true">→</span></button>
-                </div>
+                {intakeError && <div className="inline-error" role="alert">{intakeError}</div>}
+                <div className="example-row"><span>Want to verify the whole flow first?</span><button className="text-button" onClick={useSample}>Analyze the synthetic sample <span aria-hidden="true">→</span></button></div>
               </div>
-
               <aside className="trust-card">
-                <p className="trust-kicker">Private by design</p>
-                <h2>Your document.<br />Your control.</h2>
-                <p className="trust-intro">Privacy is visible at every step, not hidden in fine print.</p>
+                <p className="trust-kicker">Private by architecture</p>
+                <h2>Your PDF.<br />Your control.</h2>
+                <p className="trust-intro">The privacy promise is enforced by the run, not hidden in policy text.</p>
                 <ul>
-                  <li><span className="check">01</span><span><strong>No account needed</strong><small>Use PaperWork without creating a profile.</small></span></li>
-                  <li><span className="check">02</span><span><strong>Held on your device</strong><small>Your selected source stays in browser memory.</small></span></li>
-                  <li><span className="check">03</span><span><strong>Explicit consent</strong><small>Review the data flow before processing begins.</small></span></li>
+                  <li><span className="check">01</span><span><strong>Local extraction</strong><small>The PDF worker is bundled with PaperWork and runs in this tab.</small></span></li>
+                  <li><span className="check">02</span><span><strong>Explicit permission</strong><small>Nothing is read until you approve both local steps.</small></span></li>
+                  <li><span className="check">03</span><span><strong>Trusted result gate</strong><small>Unverified claims and unsafe plans never reach the result screen.</small></span></li>
                 </ul>
-                <button className="data-flow-button" onClick={() => setShowFlow(true)}>View privacy architecture <span aria-hidden="true">→</span></button>
+                <button className="data-flow-button" onClick={() => setShowFlow(true)}>Inspect the privacy architecture <span aria-hidden="true">→</span></button>
               </aside>
             </div>
           </section>
-
           <section className="proof-strip" id="how-it-works" aria-label="PaperWork process">
-            <div><span>01</span><strong>Add any source</strong><p>Files, scans, screenshots or links</p></div>
-            <div><span>02</span><strong>PaperWork finds what matters</strong><p>Dates, duties, risks and missing details</p></div>
-            <div><span>03</span><strong>Get a plan with proof</strong><p>Every next step links to its evidence</p></div>
+            <div><span>01</span><strong>Add one PDF</strong><p>Actual bytes are checked before parsing</p></div>
+            <div><span>02</span><strong>Read it locally</strong><p>Every page becomes an immutable cited segment</p></div>
+            <div><span>03</span><strong>Get a trusted plan</strong><p>Claims, actions and the run receipt are independently verified</p></div>
           </section>
         </>
       )}
 
-      {phase === 'review' && source && (
+      {workflow.tag === 'review' && (
         <div className="app-stage">
-          <header className="app-header">
-            <Brand />
-            <TrustBadge />
-            <button className="quiet-button" onClick={() => { setSource(null); setPhase('home'); }}>Cancel</button>
-          </header>
+          <header className="app-header"><Brand onHome={resetSession} /><TrustBadge /><button className="quiet-button" onClick={resetSession}>Cancel</button></header>
           <section className="review-shell">
-            <button className="back-button" onClick={() => setPhase('home')}>← Back</button>
-            <div className="review-heading">
-              <p className="eyebrow">{source.sample ? 'Explore the sample' : 'Source staged'}</p>
-              <h1>{source.sample ? 'Ready to build the sample plan.' : 'Live document analysis is not connected yet.'}</h1>
-              <p>{source.sample
-                ? 'Choose what PaperWork should help with, then explore the prepared Action Pack.'
-                : source.kind === 'link'
-                  ? 'PaperWork has saved the link for display, but has not fetched, opened, or analysed its contents.'
-                  : 'PaperWork has displayed the file details, but has not opened, read, or analysed the file contents.'}</p>
-            </div>
-
+            <button className="back-button" onClick={resetSession}>← Back</button>
+            <div className="review-heading"><p className="eyebrow">{workflow.source.sample ? 'Synthetic test document' : 'Permission checkpoint'}</p><h1>{workflow.source.sample ? 'The sample PDF is ready, but still unanalyzed.' : 'Your PDF is staged, but still unread.'}</h1><p>{workflow.source.sample ? 'The synthetic file arrived as a normal app asset. PaperWork has not extracted its text or assembled any claims.' : 'PaperWork knows only the file name and size. Approve each local operation before its contents are opened.'}</p></div>
             <div className="review-grid">
               <section className="review-main-card">
-                <div className="section-label-row"><span>1</span><h2>Your source</h2></div>
-                <div className="source-item">
-                  <span className="source-icon">{source.kind === 'link' ? '↗' : 'P'}</span>
-                  <span className="source-copy"><strong>{source.name}</strong><small>{source.meta}</small></span>
-                  <button aria-label="Remove source" onClick={() => { setSource(null); setPhase('home'); }}>×</button>
+                <div className="section-label-row"><span>1</span><h2>Selected PDF</h2></div>
+                <div className="source-item"><span className="source-icon">P</span><span className="source-copy"><strong>{workflow.source.name}</strong><small>{workflow.source.meta}</small></span><button aria-label="Remove PDF" onClick={resetSession}>×</button></div>
+                <button className="add-source-button" onClick={() => fileInputRef.current?.click()}>↻ Replace PDF</button>
+                <input ref={fileInputRef} className="visually-hidden" type="file" accept="application/pdf,.pdf" onChange={onFileChange} />
+                {intakeError && <div className="inline-error" role="alert">{intakeError}</div>}
+                <div className="section-divider" />
+                <div className="section-label-row"><span>2</span><h2>What this milestone does</h2></div>
+                <div className="scope-list">
+                  <div><strong>Supported</strong><p>English-language offer letters with selectable text and explicit role/sign-and-return wording.</p></div>
+                  <div><strong>Withheld</strong><p>Scans, password-protected PDFs, ambiguous dates, unsupported document types and partial extraction.</p></div>
+                  <div><strong>Never automatic</strong><p>PaperWork creates manual next steps only. It does not sign, send, upload or contact anyone.</p></div>
                 </div>
-                <button className="add-source-button" onClick={() => setPhase('home')}>＋ Add another source</button>
-
-                {source.sample && (
-                  <>
-                    <div className="section-divider" />
-                    <div className="section-label-row"><span>2</span><h2>What do you need?</h2></div>
-                    <div className="intent-grid">
-                      {['Guide me', 'Find risks', 'Help me respond', 'Compare sources'].map((item) => (
-                        <button key={item} className={intent === item ? 'selected' : ''} onClick={() => setIntent(item)}>
-                          <span>{item === 'Guide me' ? '◎' : item === 'Find risks' ? '△' : item === 'Help me respond' ? '↗' : '⇄'}</span>{item}
-                        </button>
-                      ))}
-                    </div>
-                  </>
-                )}
               </section>
-
               <aside className="review-side-card">
-                {source.sample ? (
-                  <>
-                    <p className="trust-kicker">Sample data flow</p>
-                    <h2>Know before you continue.</h2>
-                    <dl>
-                      <div><dt>Sample rendered</dt><dd>This browser</dd></div>
-                      <div><dt>Sent externally</dt><dd>Nothing</dd></div>
-                      <div><dt>Stored by PaperWork</dt><dd>No</dd></div>
-                      <div><dt>External knowledge</dt><dd>Off</dd></div>
-                    </dl>
-                    <button className="preview-flow-link" onClick={() => setShowFlow(true)}>Review the full data flow →</button>
-                    <div className="assurance-note"><strong>Sample analysis mode</strong><p>This session uses a prepared Action Pack while the model connection is disabled. No user document is sent for analysis.</p></div>
-                    <button className="primary-button large" onClick={startProcessing}>Build sample plan <span>→</span></button>
-                  </>
-                ) : (
-                  <>
-                    <p className="trust-kicker">Source status</p>
-                    <h2>Your source has not been analysed.</h2>
-                    <dl>
-                      <div><dt>Analysis</dt><dd>Not started</dd></div>
-                      <div><dt>Contents read</dt><dd>No</dd></div>
-                      <div><dt>Sent externally</dt><dd>Nothing</dd></div>
-                      <div><dt>Stored by PaperWork</dt><dd>No</dd></div>
-                    </dl>
-                    <button className="preview-flow-link" onClick={() => setShowFlow(true)}>Review the full data flow →</button>
-                    <div className="assurance-note"><strong>Current availability</strong><p>Extraction and live AI analysis are not connected yet. PaperWork will not generate sample results for this source.</p></div>
-                    <button className="primary-button large" onClick={useSample}>Use the sample instead <span>→</span></button>
-                  </>
-                )}
+                <p className="trust-kicker">Know before you continue</p><h2>Allow this local run.</h2>
+                <dl><div><dt>PDF processing</dt><dd>This browser tab</dd></div><div><dt>AI provider</dt><dd>Not used</dd></div><div><dt>PaperWork server</dt><dd>No document upload</dd></div><div><dt>External knowledge</dt><dd>Off</dd></div></dl>
+                <button className="preview-flow-link" onClick={() => setShowFlow(true)}>Preview the exact data flow →</button>
+                <fieldset className="local-consent">
+                  <legend>Explicit local permissions</legend>
+                  <label><input type="checkbox" checked={Boolean(workflow.approvals.readApprovedAt)} onChange={(event) => updateApproval('readApprovedAt', event.target.checked)} /><span>Allow PaperWork to read and extract text from this PDF in this tab.</span></label>
+                  <label><input type="checkbox" disabled={!workflow.approvals.readApprovedAt} checked={Boolean(workflow.approvals.planApprovedAt)} onChange={(event) => updateApproval('planApprovedAt', event.target.checked)} /><span>Allow PaperWork to use that text to build and verify a source-only Action Pack in this tab.</span></label>
+                </fieldset>
+                <div className="assurance-note"><strong>Your PDF stays yours</strong><p>No AI provider or PaperWork server receives the file. The PDF and extracted text are held by this page for the current session.</p></div>
+                <button className="primary-button large" disabled={!workflow.approvals.readApprovedAt || !workflow.approvals.planApprovedAt} onClick={startLocalAnalysis}>Read PDF and build local plan <span>→</span></button>
               </aside>
             </div>
           </section>
         </div>
       )}
 
-      {phase === 'processing' && source?.sample && (
+      {workflow.tag === 'processing' && (
         <div className="processing-page">
-          <div className="processing-top"><Brand /><TrustBadge compact /></div>
+          <div className="processing-top"><Brand onHome={resetSession} /><TrustBadge compact /></div>
           <section className="processing-card" aria-live="polite">
-            <div className="processing-paper"><span>P</span><i /><i /><i /></div>
-            <p className="eyebrow">Preparing your Action Pack</p>
-            <h1>Loading the prepared sample plan.</h1>
-            <p className="processing-file">{source.name}</p>
+            <div className="processing-paper"><span>P</span><i /><i /><i /></div><p className="eyebrow">Trusted local assembly</p>
+            <h1>{workflow.progress.stage === 'extracting' ? `Reading page ${workflow.progress.page} of ${workflow.progress.totalPages}.` : workflow.progress.stage === 'validating' ? 'Verifying before anything is shown.' : workflow.progress.stage === 'assembling' ? 'Building a source-only Action Pack.' : 'Opening your PDF locally.'}</h1>
+            <p className="processing-file">{workflow.source.name}</p>
             <ol className="processing-list">
-              {processingSteps.map((step, index) => (
-                <li key={step} className={index < progress ? 'done' : index === progress ? 'active' : ''}>
-                  <span>{index < progress ? '✓' : index === progress ? <i /> : index + 1}</span>{step}
-                </li>
-              ))}
+              {PROGRESS_STEPS.map((step, index) => {
+                const currentIndex = PROGRESS_STEPS.findIndex((item) => item.stage === workflow.progress.stage);
+                return <li key={step.stage} className={index < currentIndex ? 'done' : index === currentIndex ? 'active' : ''}><span>{index < currentIndex ? '✓' : index === currentIndex ? <i /> : index + 1}</span>{step.label}{step.stage === 'extracting' && workflow.progress.stage === 'extracting' ? ` · ${workflow.progress.page}/${workflow.progress.totalPages}` : ''}</li>;
+              })}
             </ol>
-            <button className="quiet-button" onClick={() => setPhase('review')}>Cancel</button>
+            <p className="processing-privacy">No document bytes or extracted text are sent over the network.</p>
+            <button className="quiet-button" onClick={cancelAnalysis}>Cancel local analysis</button>
           </section>
         </div>
       )}
 
-      {phase === 'result' && source?.sample && (
-        <div className="result-page">
-          <header className="result-header">
-            <Brand />
-            <nav className="result-nav" aria-label="Action Pack sections">
-              {(['overview', 'plan', 'sources'] as const).map((tab) => (
-                <button key={tab} className={resultTab === tab ? 'active' : ''} onClick={() => setResultTab(tab)}>{tab[0].toUpperCase() + tab.slice(1)}</button>
-              ))}
-            </nav>
-            <button className="privacy-pill" onClick={() => setShowFlow(true)}><span>✓</span> Privacy receipt</button>
-          </header>
+      {workflow.tag === 'failure' && (
+        <div className="app-stage">
+          <header className="app-header"><Brand onHome={resetSession} /><TrustBadge /><button className="quiet-button" onClick={resetSession}>Close</button></header>
+          <section className="failure-shell"><div className="failure-card" role="alert"><span className="failure-mark">!</span><p className="eyebrow">Result safely withheld</p><h1>{FAILURE_COPY[workflow.code].title}</h1><p>{FAILURE_COPY[workflow.code].detail}</p><div className="failure-actions"><button className="primary-button" onClick={retryFromFailure}>Review this PDF</button><button className="quiet-button" onClick={resetSession}>Choose another PDF</button></div><div className="assurance-note"><strong>Trust rule enforced</strong><p>Partial extraction, self-attested claims and incomplete event receipts cannot become a trusted Action Pack.</p></div></div></section>
+        </div>
+      )}
 
-          <div className="sample-banner"><strong>Sample analysis</strong><span>Prepared offer-letter content · No user source processed · No AI provider connected</span></div>
+      {result && (
+        <div className="result-page">
+          <header className="result-header"><Brand onHome={resetSession} /><nav className="result-nav" aria-label="Action Pack sections">{(['overview', 'plan', 'sources'] as const).map((tab) => <button key={tab} className={resultTab === tab ? 'active' : ''} onClick={() => setResultTab(tab)}>{tab[0].toUpperCase() + tab.slice(1)}</button>)}</nav><button className="privacy-pill" onClick={() => setShowFlow(true)}><span>✓</span> Run receipt</button></header>
+          <div className="sample-banner trusted-run-banner"><strong>{result.pack.runMode === 'sample_fixture' ? 'Recognized synthetic fixture' : 'Trusted local run'}</strong><span>{result.pack.runMode === 'sample_fixture' ? 'Demonstration only · Do not sign or submit · ' : ''}Native-text extraction · Deterministic rules · No AI provider · No document upload</span></div>
 
           {resultTab === 'overview' && (
             <div className="result-grid">
-              <aside className="result-sidebar">
-                <p className="side-label">Your sources</p>
-                <div className="mini-source"><span>{source.kind === 'link' ? '↗' : 'P'}</span><div><strong>{source.name}</strong><small>{source.meta}</small></div></div>
-                <button className="side-add" onClick={() => setPhase('home')}>＋ Add source</button>
-                <div className="side-rule" />
-                <p className="side-label">Evidence coverage</p>
-                <div className="coverage-ring"><span>{fixtureClaimCount}</span><small>claims linked</small></div>
-                <p className="coverage-copy"><strong>{reviewClaimCount} need your review</strong><br />Inferences and unknowns stay labelled.</p>
-                <button className="side-receipt" onClick={() => setShowFlow(true)}>Where did my data go? →</button>
-              </aside>
-
+              <aside className="result-sidebar"><p className="side-label">Analyzed PDF</p><div className="mini-source"><span>P</span><div><strong>{result.view.source.name}</strong><small>{result.view.source.meta}</small></div></div><button className="side-add" onClick={resetSession}>＋ Analyze another PDF</button><div className="side-rule" /><p className="side-label">Verification coverage</p><div className="coverage-ring"><span>{result.view.validation.acceptedClaims}</span><small>claims accepted</small></div><p className="coverage-copy"><strong>{result.view.validation.reviewClaims} need your review</strong><br />Conflicts and unknowns stay visibly labelled.</p><button className="side-receipt" onClick={() => setShowFlow(true)}>What happened in this run? →</button></aside>
               <section className="result-main">
-                <div className="result-title-row">
-                  <div>
-                    <p className="document-type">Employment offer · Sample analysis</p>
-                    <h1>Software Engineer<br />Offer Letter</h1>
-                  </div>
-                  <div className="result-statuses"><span className="status-action">Action required</span><span>Due 5 Sep</span></div>
-                </div>
-
-                <div className="brief-card">
-                  <p className="card-kicker">The brief</p>
-                  <p>The prepared letter offers a Software Engineer role. The action plan below keeps sourced terms, inferences and unknowns visibly separate.</p>
-                  <button onClick={() => openEvidence('role')}>View the role in the sample source <span>→</span></button>
-                </div>
-
-                <section className="next-move-card">
-                  <div className="next-number">01</div>
-                  <div className="next-copy">
-                    <p className="card-kicker">Your next move</p>
-                    <h2>Request the missing compensation annexure.</h2>
-                    <p>The ₹12,00,000 annual package points to Annexure B, but that attachment is missing from your sources.</p>
-                    <div className="next-actions"><button className="primary-button" onClick={() => setChecked((items) => items.includes(1) ? items : [...items, 1])}>Mark as done</button><button className="evidence-chip inference" onClick={() => openEvidence('salaryAnnexure')}>◎ PaperWork inference</button></div>
-                  </div>
-                  <div className="next-due"><small>Complete</small><strong>Before accepting</strong></div>
-                </section>
-
-                <section className="facts-section">
-                  <div className="section-heading"><div><p className="card-kicker">At a glance</p><h2>What matters most</h2></div><span>{sourcedClaimCount} sourced claims</span></div>
-                  <div className="fact-grid">
-                    <button onClick={() => openEvidence('deadline')}><small>Respond by</small><strong>5 Sep 2026</strong><span className="evidence-chip source">● From source</span></button>
-                    <button onClick={() => openEvidence('salaryAmount')}><small>Annual CTC</small><strong>₹12,00,000</strong><span className="evidence-chip source">● From source</span></button>
-                    <button onClick={() => openEvidence('locationStated')}><small>Initial location</small><strong>Bengaluru or another company location</strong><span className="evidence-chip source">● From source</span></button>
-                  </div>
-                </section>
-
-                <section className="attention-card">
-                  <div className="attention-icon">!</div>
-                  <div><p className="card-kicker">Needs your attention</p><h3>One referenced attachment is missing.</h3><p>The compensation section depends on Annexure B. Ask for it before accepting the offer.</p></div>
-                  <button onClick={() => openEvidence('salaryAnnexure')}>View evidence →</button>
-                </section>
-
-                <section className="plan-section">
-                  <div className="section-heading"><div><p className="card-kicker">Your plan</p><h2>Five steps to be ready</h2></div><span>{checked.length} of {tasks.length} complete</span></div>
-                  <div className="progress-track"><span style={{ width: `${(checked.length / tasks.length) * 100}%` }} /></div>
-                  <div className="task-list">
-                    {tasks.map((task) => (
-                      <article className={`task-item ${checked.includes(task.id) ? 'completed' : ''}`} key={task.id}>
-                        <button className="task-check" aria-label={`Mark ${task.title} complete`} onClick={() => setChecked((items) => items.includes(task.id) ? items.filter((id) => id !== task.id) : [...items, task.id])}>{checked.includes(task.id) ? '✓' : ''}</button>
-                        <div className="task-copy"><div><span className="task-priority">{task.priority}</span><span className="task-due">{task.due}</span></div><h3>{task.title}</h3><p>{task.detail}</p><button className={`evidence-chip ${evidence[task.evidence].kind}`} onClick={() => openEvidence(task.evidence)}>● {evidence[task.evidence].label}</button></div>
-                      </article>
-                    ))}
-                  </div>
-                </section>
-
-                <section className="ask-card">
-                  <div><p className="card-kicker">Ask PaperWork</p><h2>Preview prepared sample answers.</h2></div>
-                  <form onSubmit={askPaperWork}><input aria-label="Choose or enter a sample question" value={question} onChange={(event) => { setQuestion(event.target.value); setAnswer(null); }} placeholder="Choose a prepared prompt below" /><button type="submit">Preview →</button></form>
-                  <div className="ask-suggestions"><button onClick={() => { setQuestion('Draft an email asking for Annexure B'); setAnswer(null); }}>Draft a reply</button><button onClick={() => { setQuestion('What am I missing?'); setAnswer(null); }}>What am I missing?</button><button onClick={() => { setQuestion('Explain the notice period'); setAnswer(null); }}>Explain the notice period</button></div>
-                  {answer && <div className="answer-box"><span className={`evidence-chip ${answer.kind}`}>● {answer.label}</span><p>{answer.text}</p>{answer.evidence && <button onClick={() => openEvidence(answer.evidence!)}>View related evidence →</button>}</div>}
-                </section>
+                <div className="result-title-row"><div><p className="document-type">{result.view.documentType} · Browser-local</p><h1>{result.view.source.name}</h1></div><div className="result-statuses"><span className="status-action">Action required</span>{result.view.nearestDeadline && <span>Due {formatDate(result.view.nearestDeadline)}</span>}</div></div>
+                {result.view.validation.withheld > 0 && <div className="withheld-banner">{result.view.validation.withheld} item{result.view.validation.withheld === 1 ? ' was' : 's were'} withheld because verification failed.</div>}
+                <div className="brief-card"><p className="card-kicker">The source-grounded brief</p><p>{result.view.brief}</p>{result.view.facts[0] && <button onClick={() => openClaim(result.view.facts[0].id)}>Inspect the first verified passage <span>→</span></button>}</div>
+                {result.view.primaryAction && <section className="next-move-card"><div className="next-number">01</div><div className="next-copy"><p className="card-kicker">Your next move</p><h2>{result.view.primaryAction.title}</h2><p>{result.view.primaryAction.description}</p><div className="next-actions"><button className="primary-button" onClick={() => toggleAction(result.view.primaryAction!.id)}>{checkedActions.includes(result.view.primaryAction.id) ? 'Marked complete ✓' : 'Mark as done'}</button><button className="evidence-chip source_fact" onClick={() => openClaim(result.view.primaryAction!.evidenceClaimId)}>● View source basis</button></div></div><div className="next-due"><small>Complete</small><strong>{formatDate(result.view.primaryAction.due) ?? result.view.primaryAction.due}</strong></div></section>}
+                <section className="facts-section"><div className="section-heading"><div><p className="card-kicker">At a glance</p><h2>Verified source facts</h2></div><span>{result.view.facts.length} cited facts</span></div><div className="fact-grid dynamic-facts">{result.view.facts.map((claim) => <button key={claim.id} onClick={() => openClaim(claim.id)}><small>{claim.title}</small><strong>{claim.value ?? claim.statement}</strong><span className="evidence-chip source_fact">● From your PDF</span></button>)}</div></section>
+                {(result.view.conflicts[0] ?? result.view.missingInformation[0]) && (() => { const attention = result.view.conflicts[0] ?? result.view.missingInformation[0]; return <section className="attention-card"><div className="attention-icon">!</div><div><p className="card-kicker">Needs your attention</p><h3>{attention.title}</h3><p>{attention.statement}</p></div><button onClick={() => openClaim(attention.id)}>Inspect evidence →</button></section>; })()}
+                <section className="plan-section"><div className="section-heading"><div><p className="card-kicker">Your plan</p><h2>{result.view.actions.length} manual next step{result.view.actions.length === 1 ? '' : 's'}</h2></div><span>{checkedActions.length} of {result.view.actions.length} complete</span></div><div className="progress-track"><span style={{ width: `${result.view.actions.length ? (checkedActions.length / result.view.actions.length) * 100 : 0}%` }} /></div><div className="task-list">{result.view.actions.map((action) => <article className={`task-item ${checkedActions.includes(action.id) ? 'completed' : ''}`} key={action.id}><button className="task-check" aria-label={`Mark ${action.title} complete`} onClick={() => toggleAction(action.id)}>{checkedActions.includes(action.id) ? '✓' : ''}</button><div className="task-copy"><div><span className="task-priority">{action.priority}</span><span className="task-due">{formatDate(action.due) ?? action.due}</span></div><h3>{action.title}</h3><p>{action.description}</p><button className={`evidence-chip ${action.provenance === 'document_requirement' ? 'source_fact' : 'suggestion'}`} onClick={() => openClaim(action.evidenceClaimId)}>● {action.provenance === 'document_requirement' ? 'Document requirement' : 'PaperWork suggestion'}</button></div></article>)}</div></section>
+                <section className="limitations-card"><p className="card-kicker">Current boundaries</p><h2>What this result does not claim.</h2><ul>{result.view.limitations.map((limitation) => <li key={limitation}>{limitation}</li>)}</ul></section>
               </section>
-
-              <aside className={`evidence-panel ${activeEvidence.kind}`}>
-                <div className="evidence-panel-head"><p className="side-label">Evidence</p><span className={`evidence-chip ${activeEvidence.kind}`}>● {activeEvidence.label}</span></div>
-                <h2>{activeEvidence.title}</h2>
-                <blockquote>“{activeEvidence.quote}”</blockquote>
-                <p className="evidence-location">{activeEvidence.location}</p>
-                <div className="evidence-explain"><small>Why you are seeing this</small><p>{activeEvidence.rationale}</p></div>
-                <dl className="evidence-meta"><div><dt>OCR used</dt><dd>No</dd></div><div><dt>External sources</dt><dd>None</dd></div><div><dt>Last checked</dt><dd>Just now</dd></div></dl>
-                <button className="outline-button" disabled>Document viewer coming with live analysis</button>
-                <button className="correct-link" disabled>Corrections are unavailable in the prepared sample</button>
-              </aside>
+              <EvidencePanel claim={activeClaim} />
             </div>
           )}
 
-          {resultTab === 'plan' && (
-            <section className="standalone-panel">
-              <p className="eyebrow">Action plan</p><h1>Five steps to be ready.</h1><p className="standalone-lede">Each task explains why it matters and whether it comes from the source or PaperWork.</p>
-              <div className="task-list wide">{tasks.map((task) => <article className={`task-item ${checked.includes(task.id) ? 'completed' : ''}`} key={task.id}><button className="task-check" onClick={() => setChecked((items) => items.includes(task.id) ? items.filter((id) => id !== task.id) : [...items, task.id])}>{checked.includes(task.id) ? '✓' : ''}</button><div className="task-copy"><span className="task-priority">{task.priority}</span><h3>{task.title}</h3><p>{task.detail}</p><button className={`evidence-chip ${evidence[task.evidence].kind}`} onClick={() => { openEvidence(task.evidence); setResultTab('overview'); }}>● {evidence[task.evidence].label}</button></div><strong className="standalone-due">{task.due}</strong></article>)}</div>
-            </section>
-          )}
-
-          {resultTab === 'sources' && (
-            <section className="standalone-panel sources-panel">
-              <p className="eyebrow">Sources & transparency</p><h1>Everything PaperWork used.</h1><p className="standalone-lede">No external source or hidden knowledge was added to this sample Action Pack.</p>
-              <div className="source-detail"><div className="big-source-icon">{source.kind === 'link' ? '↗' : 'P'}</div><div><p className="card-kicker">Primary source</p><h2>{source.name}</h2><p>{source.meta}</p></div><span>Prepared sample</span></div>
-              <div className="source-stats"><div><small>Prepared claims</small><strong>{fixtureClaimCount}</strong></div><div><small>Claims linked to passages</small><strong>{fixtureClaimCount}</strong></div><div><small>Need review</small><strong>{reviewClaimCount}</strong></div><div><small>External references</small><strong>0</strong></div></div>
-              <button className="outline-button" onClick={() => setShowFlow(true)}>Open privacy receipt</button>
-            </section>
-          )}
+          {resultTab === 'plan' && <section className="standalone-panel"><p className="eyebrow">Action plan</p><h1>{result.view.actions.length} verified manual step{result.view.actions.length === 1 ? '' : 's'}.</h1><p className="standalone-lede">Every requirement has a direct source-fact basis. PaperWork suggestions stay separate and never execute automatically.</p><div className="task-list wide">{result.view.actions.map((action) => <article className={`task-item ${checkedActions.includes(action.id) ? 'completed' : ''}`} key={action.id}><button className="task-check" onClick={() => toggleAction(action.id)}>{checkedActions.includes(action.id) ? '✓' : ''}</button><div className="task-copy"><span className="task-priority">{action.priority}</span><h3>{action.title}</h3><p>{action.description}</p><button className={`evidence-chip ${action.provenance === 'document_requirement' ? 'source_fact' : 'suggestion'}`} onClick={() => openClaim(action.evidenceClaimId)}>● Inspect basis</button></div><strong className="standalone-due">{formatDate(action.due) ?? action.due}</strong></article>)}</div></section>}
+          {resultTab === 'sources' && <section className="standalone-panel sources-panel"><p className="eyebrow">Sources & run receipt</p><h1>Everything PaperWork used.</h1><p className="standalone-lede">One uploaded PDF revision. No external references, AI provider or hidden knowledge.</p><div className="source-detail"><div className="big-source-icon">P</div><div><p className="card-kicker">Canonical source</p><h2>{result.view.source.name}</h2><p>{result.view.source.meta}</p></div><span>SHA-256 {result.view.source.fingerprint.slice(0, 12)}…</span></div><div className="source-stats"><div><small>Accepted claims</small><strong>{result.view.validation.acceptedClaims}</strong></div><div><small>Need review</small><strong>{result.view.validation.reviewClaims}</strong></div><div><small>Network transfers</small><strong>{result.view.receipt.transferCount}</strong></div><div><small>External references</small><strong>0</strong></div></div><button className="outline-button" onClick={() => setShowFlow(true)}>Open the observed run receipt</button></section>}
         </div>
       )}
 
       {showFlow && (
         <div className="modal-backdrop" role="presentation" onMouseDown={() => setShowFlow(false)}>
           <section className="modal-panel" role="dialog" aria-modal="true" aria-labelledby="flow-title" onMouseDown={(event) => event.stopPropagation()}>
-            <button className="modal-close" onClick={() => setShowFlow(false)} aria-label="Close">×</button>
-            <p className="eyebrow">Transparency receipt</p>
-            <h2 id="flow-title">Where did my data go?</h2>
-            <p className="modal-lede">{source ? 'This build keeps selected source details in browser memory. It does not read file contents, fetch links, or send document data to an AI provider.' : 'No source is selected. This build has no AI provider, document storage, account service, or telemetry integration.'}</p>
-            <div className="flow-diagram"><div><span>1</span><strong>{source?.sample ? 'Bundled sample' : source ? 'Selected source' : 'No source selected'}</strong><small>{source?.sample ? 'Prepared content' : source ? 'Metadata in browser memory' : 'Nothing staged'}</small></div><i>→</i><div><span>2</span><strong>PaperWork workspace</strong><small>{source?.sample ? 'Prepared Action Pack' : source ? 'Staging only · contents unread' : 'Waiting for a source'}</small></div><i>→</i><div className="flow-stop"><span>×</span><strong>No external service</strong><small>Nothing transmitted for analysis</small></div></div>
-            <dl className="receipt-list"><div><dt>Analysis</dt><dd>{source?.sample ? 'Prepared sample in this browser' : source ? 'Not performed' : 'No source selected'}</dd></div><div><dt>AI provider</dt><dd>Not connected</dd></div><div><dt>Sent externally</dt><dd>Nothing for analysis</dd></div><div><dt>Stored by PaperWork</dt><dd>Nothing</dd></div><div><dt>Used for training</dt><dd>No</dd></div><div><dt>Session data</dt><dd>{source ? 'Cleared on reload or tab close' : 'None'}</dd></div></dl>
-            <p className="future-note"><strong>Production principle:</strong> PaperWork will show this receipt before analysis and preview the exact content being sent whenever a user chooses cloud processing.</p>
-            <button className="primary-button full" onClick={() => setShowFlow(false)}>Understood</button>
+            <button className="modal-close" onClick={() => setShowFlow(false)} aria-label="Close">×</button><p className="eyebrow">{result ? 'Observed run receipt' : 'Data-flow preview'}</p><h2 id="flow-title">{result ? 'What happened in this run?' : 'See the exact path before anything is read.'}</h2>
+            <p className="modal-lede">{result ? 'The receipt below is derived from the trusted Action Pack, not from hard-coded interface promises.' : source ? workflow.tag === 'review' ? source.sample ? 'The synthetic PDF arrived as an application asset, but PaperWork has not extracted its text or assembled claims. Both local permissions are still required.' : 'Only the selected PDF name and size are visible. Its bytes remain unread until both local permissions are approved.' : 'PaperWork is processing this PDF inside the current browser tab. No analysis transfer is available in this build.' : 'No source is selected. PaperWork has no account service, AI provider, document upload endpoint or telemetry integration.'}</p>
+            <div className="flow-diagram"><div><span>1</span><strong>{source ? 'Selected PDF' : 'Your PDF'}</strong><small>{source ? source.name : 'Not selected yet'}</small></div><i>→</i><div><span>2</span><strong>Local worker + trusted assembler</strong><small>{result ? 'Completed in this tab' : source ? 'Runs only after approval' : 'Waiting locally'}</small></div><i>→</i><div className="flow-stop"><span>×</span><strong>No document transfer</strong><small>No AI provider or PaperWork server</small></div></div>
+            <dl className="receipt-list"><div><dt>Processing</dt><dd>{result?.view.receipt.processingMode ?? (source ? 'Not started' : 'No source selected')}</dd></div><div><dt>PDF contents read</dt><dd>{result ? 'Yes, in this tab' : workflow.tag === 'processing' ? 'Locally in progress' : 'No'}</dd></div><div><dt>Network transfers</dt><dd>{result ? `${result.view.receipt.transferCount} recorded` : 'No analysis transfer available'}</dd></div><div><dt>AI provider</dt><dd>{result?.view.receipt.providerUsed ? 'Recorded' : 'Not used'}</dd></div><div><dt>PaperWork server</dt><dd>{result?.view.receipt.serverUsed ? 'Recorded' : 'No document processing'}</dd></div>{result && <><div><dt>Parser</dt><dd>{result.view.receipt.parser}</dd></div><div><dt>Validator</dt><dd>{result.view.receipt.validator}</dd></div><div><dt>Completed</dt><dd>{formatTime(result.view.receipt.completedAt)}</dd></div><div><dt>Browser retention</dt><dd>{result.view.receipt.browserRetention}</dd></div></>}</dl>
+            <p className="future-note"><strong>Open-source trust boundary:</strong> Parsed JSON is never enough to render. Only the final frozen object registered by the private trusted assembler is accepted by this result workspace.</p><button className="primary-button full" onClick={() => setShowFlow(false)}>Understood</button>
           </section>
         </div>
       )}
-
     </main>
   );
 }

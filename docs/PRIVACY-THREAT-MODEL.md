@@ -1,28 +1,34 @@
 # PaperWork privacy threat model
 
-Status: draft for the current prototype and its planned analysis system.
+Status: draft for the v0.1 browser-local PDF milestone and planned extensions.
 
 This document separates behavior that exists today from intended behavior. A
 planned control is not a security or privacy guarantee.
 
-## Current prototype
+## Current v0.1 boundary
 
-PaperWork is currently a sample-only frontend. Selecting a file gives the UI
-its name, MIME type, and size. The application does not read the file bytes,
-parse the document, perform OCR, upload the file, or send it to an AI provider.
-A pasted link is kept in page state for display; PaperWork does not fetch it.
+PaperWork now has one narrow real-processing mode. After two explicit local
+permissions, it reads a selected PDF in the current browser tab, verifies its
+file signature and limits, computes SHA-256, and sends a private byte copy to a
+same-origin bundled `pdfjs-dist` module worker. Every page must produce
+meaningful native text. PaperWork then runs deterministic English offer-letter
+rules, independent semantic/citation/action/event checks, and renders only a
+privately registered `TrustedActionPackV1`.
 
-The progress sequence, Action Pack, citations, follow-up answer, evidence
-counts, and transparency receipt are prepared sample content. They are not the
-result of inspecting the selected source. There is no application database,
-object store, account system, telemetry integration, or AI integration in this
-repository.
+No selected PDF bytes or extracted text are sent to an AI provider or
+PaperWork document-processing server. There is no application database,
+object store, account system, telemetry integration, URL fetcher, OCR service,
+or AI integration in this repository. The file, extracted segments, trusted
+pack, and task state remain in page memory for the current lifecycle. The app
+does not claim independently verifiable memory deletion; its receipt therefore
+uses the conservative browser state `status_unavailable`.
 
-Versioned Action Pack transport contracts and adversarial tests now exist in
-`core/action-pack/v1`, but they are not connected to the UI. A structurally
-valid pack is deliberately non-renderable: no trusted assembler exists yet to
-combine independently observed source, semantic-validation, action-safety, and
-processing-event ledgers.
+The synthetic sample is a real two-page PDF served as a normal application
+asset and then passed through the same browser-local extraction and trust path.
+It is not pre-trusted result JSON. Its exact SHA-256 digest is recognized by the
+trusted assembler, so manually re-uploading identical bytes still produces a
+`sample_fixture` result with a do-not-submit action rather than a live-offer
+action.
 
 The host still serves the application and may receive ordinary web-request
 metadata such as an IP address, user agent, requested path, and time. Browser
@@ -36,14 +42,17 @@ UI does not create a verifiable deletion record.
 Application assets: hosting service -> browser
                                    (ordinary request metadata may exist)
 
-Selected file: user -> browser file input
-                     -> UI reads name, type, and size only
-                     -X-> no parser, PaperWork backend, or AI provider
+Selected PDF: user -> browser file input -> explicit local permission
+                   -> fresh, ordered, one-use authorization ledger
+                   -> byte signature/limits/SHA-256
+                   -> same-origin local PDF worker
+                   -> immutable page-region source segments
+                   -> deterministic offer-letter rules
+                   -> independent semantic/action/event validation
+                   -> private trusted-pack registration -> result UI
 
-Pasted URL: user -> in-page React state -> displayed by the sample UI
-                                      -X-> no URL fetch
-
-Result: bundled sample fixtures -> browser UI
+Document content -X-> no AI provider, PaperWork processing server, telemetry,
+                      database, object storage, URL fetch, or external knowledge
 ```
 
 Current trust boundaries are the user's device and browser, the served
@@ -51,7 +60,7 @@ application code and dependencies, and the hosting/CDN layer used to deliver
 that code. PaperWork does not control the user's browser extensions, device,
 network, or infrastructure-level logs.
 
-## Assets to protect in a future analysis system
+## Assets to protect now and in future modes
 
 - Original file bytes, images, links, and document metadata.
 - Extracted text, OCR output, page images, and source coordinates.
@@ -61,17 +70,19 @@ network, or infrastructure-level logs.
 - Provider credentials and local-model configuration.
 - Analysis receipts, which may themselves reveal sensitive metadata.
 
-## Planned data flow and trust boundaries
+## Current trust boundaries and planned modes
 
-The following is a design target, not implemented behavior:
+The native-text PDF path through trusted assembly is implemented locally. OCR,
+provider calls, server processing, persistence, analytics, exports, and sharing
+remain design targets rather than current behavior:
 
 ```text
 source
   -> ingestion and type/size checks
-  -> isolated extraction or OCR
+  -> browser-local native-text extraction (implemented) or isolated OCR (planned)
   -> normalized, addressable source segments
   -> outbound-data preview and explicit user choice
-  -> optional model/provider boundary
+  -> deterministic local rules (implemented) or optional model/provider boundary (planned)
   -> structured claims and actions
   -> citation and policy validation
   -> trusted-ledger assembly
@@ -88,7 +99,7 @@ not appear as product promises until they are implemented and testable.
 
 | Risk | Required mitigation before production |
 | --- | --- |
-| Sample output is mistaken for real analysis | Keep the sample banner visible throughout the result; never derive a user-specific-looking result from an unread source; test this disclosure. |
+| Synthetic output is mistaken for a private-document run | Label the sample PDF, recognize its immutable byte digest even after re-upload, process it through the same real local pipeline, emit `sample_fixture` provenance, and derive the receipt from observed events rather than fixture assurances. |
 | A sensitive source is transmitted unexpectedly | Default to no transfer; show the destination and exact outbound payload before consent; make the action button name the transfer. |
 | A provider retains or trains on content | Display the provider, model, applicable retention/training terms, and configuration before transfer; minimize the payload; never imply PaperWork controls a provider's systems. |
 | A document contains prompt injection | Treat document text as untrusted data, never as system instructions; deny document-triggered tools or network calls; validate model output independently. |
@@ -114,7 +125,8 @@ Evidence labels describe provenance, not truth or professional certainty:
   include a concise rationale.
 - **Suggested next step**: PaperWork's recommendation, not a requirement stated
   by the source.
-- **Not confirmed**: the supplied sources do not establish the claim.
+- **Not confirmed**: PaperWork did not establish the claim from the supported
+  extraction and rules. This is not proof that the source is silent.
 - **Conflict found**: cited sources disagree or cannot be reconciled.
 
 Every material date, amount, eligibility condition, obligation, risk, and
@@ -122,10 +134,14 @@ action must carry one of these labels. A sentence must not silently combine a
 source fact with an inference or recommendation. Percentage confidence must not
 substitute for evidence.
 
-## Planned analysis receipt
+## Current local receipt and planned extensions
 
-The current modal is illustrative; it is not generated from an audit log. A
-future receipt should be produced from observed processing events and include:
+The current browser-local modal is projected from the trusted pack's observed
+event ledger. It includes processing mode, parser and validator versions,
+completion time, the two run-bound local authorization observations, validation
+counts, zero transfer records, and a conservative
+browser-retention state. Future provider and persistence receipts must also
+include:
 
 - Source identifiers and privacy-preserving fingerprints, not source contents.
 - Processing time, mode, and execution locations.
@@ -142,8 +158,8 @@ and provider details can be sensitive.
 
 ## Release gates for real processing
 
-Before any source parsing, URL fetching, model call, storage, analytics, or
-sharing feature is enabled:
+Before any OCR, URL fetching, model call, server-side document processing,
+storage, analytics, export, or sharing feature is enabled:
 
 1. Update this threat model and the user-facing data-flow disclosure.
 2. Add tests that prove what is and is not transmitted.
