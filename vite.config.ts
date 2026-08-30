@@ -14,6 +14,9 @@ const isCodexSeatbeltSandbox = process.env.CODEX_SANDBOX === 'seatbelt';
 
 const localBindingConfig = {
   main: 'vinext/server/app-router-entry',
+  // Keep Worker fetch behavior deterministic; `cache: "no-store"` subrequests
+  // require a post-2024-11-11 compatibility date.
+  compatibility_date: '2026-08-30',
   compatibility_flags: ['nodejs_compat'],
   d1_databases: d1
     ? [

@@ -2,7 +2,7 @@ import type {
   PDFDocumentLoadingTask,
   PDFWorker,
 } from 'pdfjs-dist';
-import pdfWorkerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
+import PdfJsWorker from 'pdfjs-dist/build/pdf.worker.min.mjs?worker';
 
 import type {
   CanonicalSourceContextV1,
@@ -246,11 +246,10 @@ export async function extractLocalPdfV1(
     }
 
     try {
-      const resolvedWorkerUrl = new URL(pdfWorkerUrl, globalThis.location.href);
-      if (globalThis.location.origin === 'null' || resolvedWorkerUrl.origin !== globalThis.location.origin) {
+      if (globalThis.location.origin === 'null') {
         throw new LocalPdfExtractionErrorV1('extractor_unavailable');
       }
-      workerPort = new Worker(resolvedWorkerUrl, { type: 'module', name: 'paperwork-pdf-extractor' });
+      workerPort = new PdfJsWorker({ name: 'paperwork-pdf-extractor' });
       workerErrorHandler = () => guard.stop('extractor_unavailable');
       workerPort.addEventListener('error', workerErrorHandler, { once: true });
       workerPort.addEventListener('messageerror', workerErrorHandler, { once: true });

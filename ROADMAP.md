@@ -120,8 +120,10 @@ the product as a work in progress.
   comparison, and clearly attributed conflicts.
 - Add specialized packs for academic notices, applications, invoices, and
   employment policies only after each has its own evaluation set.
-- Introduce provider-neutral adapters and bring-your-own-key mode with an
-  accurate outbound-data preview.
+- Harden the implemented provider-neutral comparison gateway with invite
+  quotas, distributed rate limits, durable replay protection, spend caps,
+  provider conformance tests, and deployment-specific secret management before
+  designing any public enablement path.
 - Export plans and privacy receipts as accessible PDF and JSON; share a plan
   without sharing its original sources.
 - Publish evaluation results, known limitations, correction history, and a

@@ -18,8 +18,9 @@ import {
   type LocalRunAuthorizationV1,
   type TrustedActionPackV1,
 } from '@/core/action-pack/v1';
+import { ModelCouncilWorkspace } from './model-council';
 
-type ResultTab = 'overview' | 'plan' | 'sources';
+type ResultTab = 'overview' | 'plan' | 'models' | 'sources';
 
 interface StagedPdf {
   readonly file: File;
@@ -167,8 +168,43 @@ export default function Home() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const abortRef = useRef<AbortController | undefined>(undefined);
   const activeRunRef = useRef<string | undefined>(undefined);
+  const flowDialogRef = useRef<HTMLElement>(null);
 
   useEffect(() => () => abortRef.current?.abort(), []);
+  useEffect(() => {
+    if (!showFlow) return;
+    const returnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : undefined;
+    const dialog = flowDialogRef.current;
+    dialog?.focus();
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        setShowFlow(false);
+        return;
+      }
+      if (event.key !== 'Tab' || !dialog) return;
+      const focusable = [...dialog.querySelectorAll<HTMLElement>('button:not([disabled]), a[href], input:not([disabled]), summary, [tabindex]:not([tabindex="-1"])')];
+      if (focusable.length === 0) {
+        event.preventDefault();
+        dialog.focus();
+        return;
+      }
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    document.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.removeEventListener('keydown', onKeyDown);
+      returnFocus?.focus();
+    };
+  }, [showFlow]);
 
   const source = workflow.tag === 'home' ? undefined : workflow.source;
   const result = workflow.tag === 'result' ? workflow : undefined;
@@ -309,6 +345,11 @@ export default function Home() {
               <p className="eyebrow"><span className="status-dot" /> Local-first · Open source</p>
               <h1>From confusing paper<br />to clear next steps.</h1>
               <p className="hero-lede">Add an offer-letter PDF. PaperWork reads every page in your browser and builds a verified action plan with exact citations.</p>
+              <div className="model-council-note" aria-label="Optional multi-model review">
+                <strong>Optional model council</strong>
+                <span>OpenAI · Claude · Mistral · DeepSeek · Ollama</span>
+                <small>Supported adapters—not free bundled access. Configuration, model licenses, provider terms, and usage charges vary. Text moves only after an exact preview and explicit consent.</small>
+              </div>
             </div>
             <div className="workspace-preview" aria-label="Add a PDF to PaperWork">
               <div className="upload-card">
@@ -410,7 +451,7 @@ export default function Home() {
 
       {result && (
         <div className="result-page">
-          <header className="result-header"><Brand onHome={resetSession} /><nav className="result-nav" aria-label="Action Pack sections">{(['overview', 'plan', 'sources'] as const).map((tab) => <button key={tab} className={resultTab === tab ? 'active' : ''} onClick={() => setResultTab(tab)}>{tab[0].toUpperCase() + tab.slice(1)}</button>)}</nav><button className="privacy-pill" onClick={() => setShowFlow(true)}><span>✓</span> Run receipt</button></header>
+          <header className="result-header"><Brand onHome={resetSession} /><nav className="result-nav" aria-label="Action Pack sections">{(['overview', 'plan', 'models', 'sources'] as const).map((tab) => <button key={tab} aria-current={resultTab === tab ? 'page' : undefined} className={resultTab === tab ? 'active' : ''} onClick={() => setResultTab(tab)}>{tab === 'models' ? 'Model review' : tab[0].toUpperCase() + tab.slice(1)}</button>)}</nav><button className="privacy-pill" onClick={() => setShowFlow(true)}><span>✓</span> Run receipt</button></header>
           <div className="sample-banner trusted-run-banner"><strong>{result.pack.runMode === 'sample_fixture' ? 'Recognized synthetic fixture' : 'Trusted local run'}</strong><span>{result.pack.runMode === 'sample_fixture' ? 'Demonstration only · Do not sign or submit · ' : ''}Native-text extraction · Deterministic rules · No AI provider · No document upload</span></div>
 
           {resultTab === 'overview' && (
@@ -431,17 +472,18 @@ export default function Home() {
           )}
 
           {resultTab === 'plan' && <section className="standalone-panel"><p className="eyebrow">Action plan</p><h1>{result.view.actions.length} verified manual step{result.view.actions.length === 1 ? '' : 's'}.</h1><p className="standalone-lede">Every requirement has a direct source-fact basis. PaperWork suggestions stay separate and never execute automatically.</p><div className="task-list wide">{result.view.actions.map((action) => <article className={`task-item ${checkedActions.includes(action.id) ? 'completed' : ''}`} key={action.id}><button className="task-check" onClick={() => toggleAction(action.id)}>{checkedActions.includes(action.id) ? '✓' : ''}</button><div className="task-copy"><span className="task-priority">{action.priority}</span><h3>{action.title}</h3><p>{action.description}</p><button className={`evidence-chip ${action.provenance === 'document_requirement' ? 'source_fact' : 'suggestion'}`} onClick={() => openClaim(action.evidenceClaimId)}>● Inspect basis</button></div><strong className="standalone-due">{formatDate(action.due) ?? action.due}</strong></article>)}</div></section>}
-          {resultTab === 'sources' && <section className="standalone-panel sources-panel"><p className="eyebrow">Sources & run receipt</p><h1>Everything PaperWork used.</h1><p className="standalone-lede">One uploaded PDF revision. No external references, AI provider or hidden knowledge.</p><div className="source-detail"><div className="big-source-icon">P</div><div><p className="card-kicker">Canonical source</p><h2>{result.view.source.name}</h2><p>{result.view.source.meta}</p></div><span>SHA-256 {result.view.source.fingerprint.slice(0, 12)}…</span></div><div className="source-stats"><div><small>Accepted claims</small><strong>{result.view.validation.acceptedClaims}</strong></div><div><small>Need review</small><strong>{result.view.validation.reviewClaims}</strong></div><div><small>Network transfers</small><strong>{result.view.receipt.transferCount}</strong></div><div><small>External references</small><strong>0</strong></div></div><button className="outline-button" onClick={() => setShowFlow(true)}>Open the observed run receipt</button></section>}
+          {resultTab === 'models' && <ModelCouncilWorkspace pack={result.pack} />}
+          {resultTab === 'sources' && <section className="standalone-panel sources-panel"><p className="eyebrow">Trusted source & local receipt</p><h1>Everything the local Action Pack used.</h1><p className="standalone-lede">One uploaded PDF revision. No external references, AI provider or hidden knowledge entered this trusted result. Optional model reviews remain separate and have their own transfer receipt.</p><div className="source-detail"><div className="big-source-icon">P</div><div><p className="card-kicker">Canonical source</p><h2>{result.view.source.name}</h2><p>{result.view.source.meta}</p></div><span>SHA-256 {result.view.source.fingerprint.slice(0, 12)}…</span></div><div className="source-stats"><div><small>Accepted claims</small><strong>{result.view.validation.acceptedClaims}</strong></div><div><small>Need review</small><strong>{result.view.validation.reviewClaims}</strong></div><div><small>Local-run transfers</small><strong>{result.view.receipt.transferCount}</strong></div><div><small>External references</small><strong>0</strong></div></div><button className="outline-button" onClick={() => setShowFlow(true)}>Open the observed local receipt</button></section>}
         </div>
       )}
 
       {showFlow && (
         <div className="modal-backdrop" role="presentation" onMouseDown={() => setShowFlow(false)}>
-          <section className="modal-panel" role="dialog" aria-modal="true" aria-labelledby="flow-title" onMouseDown={(event) => event.stopPropagation()}>
+          <section ref={flowDialogRef} className="modal-panel" role="dialog" aria-modal="true" aria-labelledby="flow-title" tabIndex={-1} onMouseDown={(event) => event.stopPropagation()}>
             <button className="modal-close" onClick={() => setShowFlow(false)} aria-label="Close">×</button><p className="eyebrow">{result ? 'Observed run receipt' : 'Data-flow preview'}</p><h2 id="flow-title">{result ? 'What happened in this run?' : 'See the exact path before anything is read.'}</h2>
-            <p className="modal-lede">{result ? 'The receipt below is derived from the trusted Action Pack, not from hard-coded interface promises.' : source ? workflow.tag === 'review' ? source.sample ? 'The synthetic PDF arrived as an application asset, but PaperWork has not extracted its text or assembled claims. Both local permissions are still required.' : 'Only the selected PDF name and size are visible. Its bytes remain unread until both local permissions are approved.' : 'PaperWork is processing this PDF inside the current browser tab. No analysis transfer is available in this build.' : 'No source is selected. PaperWork has no account service, AI provider, document upload endpoint or telemetry integration.'}</p>
-            <div className="flow-diagram"><div><span>1</span><strong>{source ? 'Selected PDF' : 'Your PDF'}</strong><small>{source ? source.name : 'Not selected yet'}</small></div><i>→</i><div><span>2</span><strong>Local worker + trusted assembler</strong><small>{result ? 'Completed in this tab' : source ? 'Runs only after approval' : 'Waiting locally'}</small></div><i>→</i><div className="flow-stop"><span>×</span><strong>No document transfer</strong><small>No AI provider or PaperWork server</small></div></div>
-            <dl className="receipt-list"><div><dt>Processing</dt><dd>{result?.view.receipt.processingMode ?? (source ? 'Not started' : 'No source selected')}</dd></div><div><dt>PDF contents read</dt><dd>{result ? 'Yes, in this tab' : workflow.tag === 'processing' ? 'Locally in progress' : 'No'}</dd></div><div><dt>Network transfers</dt><dd>{result ? `${result.view.receipt.transferCount} recorded` : 'No analysis transfer available'}</dd></div><div><dt>AI provider</dt><dd>{result?.view.receipt.providerUsed ? 'Recorded' : 'Not used'}</dd></div><div><dt>PaperWork server</dt><dd>{result?.view.receipt.serverUsed ? 'Recorded' : 'No document processing'}</dd></div>{result && <><div><dt>Parser</dt><dd>{result.view.receipt.parser}</dd></div><div><dt>Validator</dt><dd>{result.view.receipt.validator}</dd></div><div><dt>Completed</dt><dd>{formatTime(result.view.receipt.completedAt)}</dd></div><div><dt>Browser retention</dt><dd>{result.view.receipt.browserRetention}</dd></div></>}</dl>
+            <p className="modal-lede">{result ? 'This receipt covers the trusted local Action Pack only and is derived from its observed event ledger. Optional model reviews have a separate digest-bound transfer receipt.' : source ? workflow.tag === 'review' ? source.sample ? 'The synthetic PDF arrived as an application asset, but PaperWork has not extracted its text or assembled claims. Both local permissions are still required.' : 'Only the selected PDF name and size are visible. Its bytes remain unread until both local permissions are approved.' : 'PaperWork is processing this PDF inside the current browser tab. Provider review is available only after a trusted local result and a separate payload approval.' : 'No source is selected. The trusted path has no account service, document upload endpoint, provider call or telemetry integration.'}</p>
+            <div className="flow-diagram"><div><span>1</span><strong>{source ? 'Selected PDF' : 'Your PDF'}</strong><small>{source ? source.name : 'Not selected yet'}</small></div><i>→</i><div><span>2</span><strong>Local worker + trusted assembler</strong><small>{result ? 'Completed in this tab' : source ? 'Runs only after approval' : 'Waiting locally'}</small></div><i>→</i><div className="flow-stop"><span>×</span><strong>No local-run transfer</strong><small>No AI provider or PaperWork processing server</small></div></div>
+            <dl className="receipt-list"><div><dt>Processing</dt><dd>{result?.view.receipt.processingMode ?? (source ? 'Not started' : 'No source selected')}</dd></div><div><dt>PDF contents read</dt><dd>{result ? 'Yes, in this tab' : workflow.tag === 'processing' ? 'Locally in progress' : 'No'}</dd></div><div><dt>Local-run transfers</dt><dd>{result ? `${result.view.receipt.transferCount} recorded` : 'None available'}</dd></div><div><dt>AI provider in trusted run</dt><dd>{result?.view.receipt.providerUsed ? 'Recorded' : 'Not used'}</dd></div><div><dt>PaperWork processing server</dt><dd>{result?.view.receipt.serverUsed ? 'Recorded' : 'Not used'}</dd></div>{result && <><div><dt>Parser</dt><dd>{result.view.receipt.parser}</dd></div><div><dt>Validator</dt><dd>{result.view.receipt.validator}</dd></div><div><dt>Completed</dt><dd>{formatTime(result.view.receipt.completedAt)}</dd></div><div><dt>Browser retention</dt><dd>{result.view.receipt.browserRetention}</dd></div></>}</dl>
             <p className="future-note"><strong>Open-source trust boundary:</strong> Parsed JSON is never enough to render. Only the final frozen object registered by the private trusted assembler is accepted by this result workspace.</p><button className="primary-button full" onClick={() => setShowFlow(false)}>Understood</button>
           </section>
         </div>
