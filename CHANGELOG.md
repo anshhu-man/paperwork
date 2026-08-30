@@ -14,6 +14,7 @@ PaperWork follows [Semantic Versioning](https://semver.org/) once functional rel
 ### Changed
 
 - The product's Open source action now links directly to the public GitHub repository.
+- Updated the React, Vinext, Vite, Cloudflare, Wrangler, and related build dependencies to patched releases with a clean npm security audit.
 
 ### Not yet available
 
