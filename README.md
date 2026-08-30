@@ -53,6 +53,11 @@ Open [http://localhost:3000](http://localhost:3000), choose **Try a sample offer
 
 The current application uses React, TypeScript, Vinext, and a Cloudflare Worker-compatible build. It has no database, account system, telemetry, object storage, document parser, or AI API call.
 
+The repository now also contains the first versioned Action Pack transport
+contracts and adversarial runtime tests. Structural contract success is not a
+trust decision: parsed packs remain non-renderable until an independent
+semantic, action-safety, source-ledger, and event-ledger assembler is built.
+
 Read the contributor-facing [architecture](docs/ARCHITECTURE.md) and [privacy threat model](docs/PRIVACY-THREAT-MODEL.md) before changing the processing boundary. The [roadmap](ROADMAP.md) defines the gates for the first useful release.
 
 ## Help build it

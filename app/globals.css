@@ -261,6 +261,7 @@ button:focus-visible, a:focus-visible, input:focus-visible { outline: 3px solid 
 .evidence-meta div { border-color: #ebe7dd; font-size: 9px; }
 .outline-button { width: 100%; min-height: 39px; border: 1px solid #aeb8b2; border-radius: 8px; background: transparent; color: var(--green); font-size: 10px; font-weight: 750; cursor: pointer; }
 .correct-link { width: 100%; margin-top: 10px; padding: 0; border: 0; background: none; color: var(--muted); font-size: 9px; cursor: pointer; }
+.outline-button:disabled, .correct-link:disabled { cursor: default; opacity: .68; }
 
 /* Result alternate tabs */
 .standalone-panel { width: min(820px,calc(100% - 40px)); margin: 0 auto; padding: 64px 0 100px; }
