@@ -1,0 +1,48 @@
+name: Feature request
+description: Propose an improvement grounded in a real user problem.
+title: "[Feature]: "
+labels:
+  - enhancement
+  - needs-triage
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem should PaperWork solve?
+      description: Describe the person, document, and moment of difficulty without sharing private material.
+    validations:
+      required: true
+  - type: textarea
+    id: outcome
+    attributes:
+      label: What would a useful outcome look like?
+      description: Focus on the result rather than a specific implementation.
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Evidence and citations
+        - Privacy and security
+        - Document extraction
+        - Action planning
+        - Accessibility
+        - Internationalization
+        - Developer experience
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: risks
+    attributes:
+      label: Trust or safety considerations
+      description: Could this change affect privacy, evidence quality, accessibility, or user control?
+  - type: checkboxes
+    id: search
+    attributes:
+      label: Existing work
+      options:
+        - label: I searched open issues and did not find the same request.
+          required: true

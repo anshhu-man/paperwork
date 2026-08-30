@@ -300,11 +300,6 @@ button:focus-visible, a:focus-visible, input:focus-visible { outline: 3px solid 
 .receipt-list { margin: 0; padding: 0 4px; }
 .receipt-list div { border-color: #ebe7dd; font-size: 10px; }
 .future-note { margin: 18px 0 0; padding: 13px; border-radius: 9px; background: var(--amber-soft); color: #725735; font-size: 9px; line-height: 1.55; }
-.oss-grid { margin: 24px 0; display: grid; grid-template-columns: repeat(3,1fr); gap: 9px; }
-.oss-grid div { padding: 15px; border: 1px solid var(--line); border-radius: 10px; background: #faf9f5; }
-.oss-grid span { color: var(--green); font-family: var(--font-geist-mono); font-size: 9px; }
-.oss-grid strong { display: block; margin-top: 14px; font-size: 11px; }
-.oss-grid p { margin: 6px 0 0; color: var(--muted); font-size: 8px; line-height: 1.5; }
 
 @media (max-width: 1120px) {
   .result-grid { grid-template-columns: 160px minmax(500px,1fr) 285px; gap: 18px; }
@@ -390,5 +385,4 @@ button:focus-visible, a:focus-visible, input:focus-visible { outline: 3px solid 
   .modal-panel > h2 { font-size: 34px; }
   .flow-diagram { grid-template-columns: 1fr; }
   .flow-diagram > i { transform: rotate(90deg); text-align: center; }
-  .oss-grid { grid-template-columns: 1fr; }
 }

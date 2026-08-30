@@ -23,14 +23,14 @@ export const metadata: Metadata = {
     description: 'From confusing paper to clear next steps.',
     url: '/',
     siteName: 'PaperWork',
-    images: [{ url: '/og.png', width: 1200, height: 630, alt: 'PaperWork — From confusing paper to clear next steps.' }],
+    images: [{ url: '/og.jpg', width: 1200, height: 630, alt: 'PaperWork — From confusing paper to clear next steps.' }],
     type: 'website',
   },
   twitter: {
     card: 'summary_large_image',
     title: 'PaperWork',
     description: 'From confusing paper to clear next steps.',
-    images: ['/og.png'],
+    images: ['/og.jpg'],
   },
 };
 

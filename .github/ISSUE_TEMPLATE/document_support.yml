@@ -1,0 +1,49 @@
+name: Document-type proposal
+description: Suggest a document type PaperWork should support and help define its evidence requirements.
+title: "[Document type]: "
+labels:
+  - document-support
+  - needs-research
+body:
+  - type: input
+    id: document
+    attributes:
+      label: Document type
+      placeholder: Rental agreement
+    validations:
+      required: true
+  - type: input
+    id: region
+    attributes:
+      label: Country, region, or language
+      placeholder: India / English and Hindi
+    validations:
+      required: true
+  - type: textarea
+    id: user_need
+    attributes:
+      label: What do people need to understand or do?
+      description: List the important questions, decisions, dates, duties, and missing items.
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: What must be cited?
+      description: Identify claims that must always link to an exact source passage or image region.
+    validations:
+      required: true
+  - type: textarea
+    id: limitations
+    attributes:
+      label: Known risks and limitations
+      description: Include ambiguity, poor scans, legal variation, safety concerns, and cases that should be escalated to a professional.
+    validations:
+      required: true
+  - type: checkboxes
+    id: sample
+    attributes:
+      label: Sample-data promise
+      options:
+        - label: Any sample I contribute will be synthetic, public-domain, or licensed for redistribution.
+          required: true

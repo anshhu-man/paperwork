@@ -91,7 +91,6 @@ export default function Home() {
   const [checked, setChecked] = useState<number[]>([]);
   const [activeEvidence, setActiveEvidence] = useState<Evidence>(evidence.salary);
   const [showFlow, setShowFlow] = useState(false);
-  const [showOpenSource, setShowOpenSource] = useState(false);
   const [resultTab, setResultTab] = useState<'overview' | 'plan' | 'sources'>('overview');
   const [question, setQuestion] = useState('');
   const [answer, setAnswer] = useState('');
@@ -99,7 +98,6 @@ export default function Home() {
 
   useEffect(() => {
     if (phase !== 'processing') return;
-    setProgress(0);
     const timer = window.setInterval(() => {
       setProgress((current) => {
         if (current >= processingSteps.length - 1) {
@@ -148,6 +146,11 @@ export default function Home() {
     setActiveEvidence(evidence[id]);
   }
 
+  function startProcessing() {
+    setProgress(0);
+    setPhase('processing');
+  }
+
   function askPaperWork(event: FormEvent) {
     event.preventDefault();
     if (!question.trim()) return;
@@ -163,7 +166,7 @@ export default function Home() {
             <nav className="header-nav" aria-label="Primary navigation">
               <a href="#how-it-works">How it works</a>
               <button onClick={() => setShowFlow(true)}>Transparency</button>
-              <button className="github-link" onClick={() => setShowOpenSource(true)}>Open source <span aria-hidden="true">↗</span></button>
+              <a className="github-link" href="https://github.com/anshhu-man/paperwork" target="_blank" rel="noreferrer">Open source <span aria-hidden="true">↗</span></a>
             </nav>
           </header>
 
@@ -277,7 +280,7 @@ export default function Home() {
                 </dl>
                 <button className="preview-flow-link" onClick={() => setShowFlow(true)}>Review the full data flow →</button>
                 <div className="assurance-note"><strong>Sample analysis mode</strong><p>This session uses a prepared Action Pack while the model connection is disabled. Your selected source is never transmitted.</p></div>
-                <button className="primary-button large" onClick={() => setPhase('processing')}>Build my plan <span>→</span></button>
+                <button className="primary-button large" onClick={startProcessing}>Build my plan <span>→</span></button>
               </aside>
             </div>
           </section>
@@ -439,18 +442,6 @@ export default function Home() {
         </div>
       )}
 
-      {showOpenSource && (
-        <div className="modal-backdrop" role="presentation" onMouseDown={() => setShowOpenSource(false)}>
-          <section className="modal-panel open-source-modal" role="dialog" aria-modal="true" aria-labelledby="oss-title" onMouseDown={(event) => event.stopPropagation()}>
-            <button className="modal-close" onClick={() => setShowOpenSource(false)} aria-label="Close">×</button>
-            <p className="eyebrow">Built in public</p><h2 id="oss-title">Open by default.</h2>
-            <p className="modal-lede">PaperWork’s interface, prompts, evidence schema, privacy threat model, and evaluation suite are designed to be inspectable and community-owned.</p>
-            <div className="oss-grid"><div><span>01</span><strong>Inspect the logic</strong><p>See how source facts, inferences, and suggestions are separated.</p></div><div><span>02</span><strong>Test every claim</strong><p>Run citation-quality and hallucination evaluations locally.</p></div><div><span>03</span><strong>Bring your model</strong><p>Connect a local model or a provider you already trust.</p></div></div>
-            <p className="future-note">The complete working source is included with PaperWork and licensed under MIT for community use, inspection, and contribution.</p>
-            <button className="primary-button full" onClick={() => setShowOpenSource(false)}>Explore PaperWork</button>
-          </section>
-        </div>
-      )}
     </main>
   );
 }
