@@ -18,10 +18,10 @@ Worker-compatible hosting.
 | --- | --- |
 | File input | Accepts one PDF up to 10 MB. MIME and extension are advisory; the extractor checks `%PDF-` bytes before parsing. |
 | Permission | Reads no bytes until the user authorizes local text extraction and then local Action Pack assembly. Fresh ordered timestamps are bound to a one-use run UUID and retained as the first two receipt events. |
-| Extraction | Exact-pinned `pdfjs-dist` runs in a same-origin module worker. All pages must yield meaningful native text; scans and partial results are withheld. |
+| Extraction | Exact-pinned `pdfjs-dist` runs in a bundled inline module worker. All pages must yield meaningful native text; scans and partial results are withheld. |
 | Canonical source | Computes SHA-256 from the bytes and creates immutable line segments with page-region anchors and extraction provenance. |
-| Trusted analysis | Deterministic English offer-letter rules recognize explicit role, deadline, start date, salary, location, and probation terms. No model or external knowledge enters the trusted Action Pack. |
-| Optional model review | After a trusted local result, users may select unchanged passages and configured OpenAI, Anthropic, Mistral, DeepSeek, or Ollama recipients. Exact payload preview, digest-bound consent, uniform structured output, duplicate quote checks, and a separate receipt are implemented. Hosted APIs use the disabled-by-default gateway; loopback Ollama is browser-direct and selected alone. |
+| Trusted analysis | Deterministic English offer-letter rules recognize explicit role, deadline, start date, salary, location, and probation terms. A separate résumé ruleset verifies section-heading facts and labels résumé identity as an inference. No model or external knowledge enters either trusted Action Pack. |
+| Optional model review | For trusted offer-letter results, users may select unchanged passages and configured OpenAI, Anthropic, Mistral, DeepSeek, or Ollama recipients. Résumé packs are blocked from this offer-letter-only contract. Exact payload preview, digest-bound consent, uniform structured output, duplicate quote checks, and a separate receipt are implemented. Hosted APIs use the disabled-by-default gateway; loopback Ollama is browser-direct and selected alone. |
 | Results | The UI accepts only a privately registered `TrustedActionPackV1`; source facts, conflicts, unknowns, and suggestions remain distinct. |
 | Transparency receipt | Projects completed local events, components, validation counts, transfer records, and conservative retention state from the trusted pack. |
 | State | React component memory only. Task completion and other state disappear when the page lifecycle ends or reloads. |
@@ -50,7 +50,7 @@ core/local-analysis/v1/pdf.ts
   └─ complete native-text extraction and canonical segments
 
 core/action-pack/v1/trusted-assembler.ts
-  ├─ deterministic offer-letter rules and independent checks
+  ├─ deterministic offer-letter and résumé-structure rules with independent checks
   ├─ observed event/receipt construction and final authority gate
   └─ private identity-based trust registration
 
@@ -75,7 +75,7 @@ next.config.ts        Next-compatible configuration
 The repository includes strict, versioned runtime contracts for canonical
 sources, model drafts, validated analyses, Action Packs, processing events,
 consent, transfers, corrections, and receipts in `core/action-pack/v1`. It also
-includes the narrow local PDF extractor, trusted offer-letter assembler, and
+includes the narrow local PDF extractor, trusted document assembler, and
 optional model-comparison contracts/adapters. It does not include OCR, URL
 ingestion, persistence, public gateway abuse controls, or provider-authored
 trusted-pack assembly.

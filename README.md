@@ -1,6 +1,6 @@
 # PaperWork
 
-> Turn an offer-letter PDF into clear next steps—with evidence for every important claim.
+> Turn a supported PDF into clear next steps—with evidence for every important claim.
 
 [![MIT license](https://img.shields.io/badge/license-MIT-164f3c.svg)](LICENSE)
 [![Project status: pre-alpha](https://img.shields.io/badge/status-pre--alpha-a56427.svg)](ROADMAP.md)
@@ -13,11 +13,11 @@ PaperWork is an open-source workspace for understanding consequential paperwork.
 ## Project status
 
 **PaperWork v0.1 performs a narrow, real browser-local analysis.** It accepts
-PDF offer letters with selectable English text, extracts every page using a
-same-origin bundled PDF worker, creates immutable page-region segments, detects
-explicit offer terms with deterministic rules, and renders a plan only after
-citations, claim semantics, action safety, the event ledger, and the strict
-Action Pack contract all pass.
+English-language offer letters and structured résumés with selectable text,
+extracts every page using a bundled inline PDF worker, creates immutable
+page-region segments, applies document-specific deterministic rules, and
+renders a plan only after citations, claim semantics, action safety, the event
+ledger, and the strict Action Pack contract all pass.
 
 An optional, disabled-by-default **Model Council** can compare the same seven
 offer-letter fields across explicitly selected OpenAI, Claude, Mistral,
@@ -33,9 +33,11 @@ separately from hosted providers.
 
 PaperWork still does not perform OCR, accept links/images/DOCX, or claim to
 analyze arbitrary document types. Scans, password-protected PDFs, partial
-extraction, overprinted or non-monotonic text ordering, and unsupported offer
-wording are safely withheld instead of producing a guess. This is an early
-milestone, not professional employment or legal advice.
+extraction, genuinely ambiguous or overprinted text, and unrecognized document
+structures are safely withheld instead of producing a guess. Résumé analysis
+currently verifies structure and section headings; the model council remains
+offer-letter-only until a separate résumé output contract is validated. This is
+an early milestone, not professional career, employment, or legal advice.
 
 ## What PaperWork will give users
 
@@ -103,7 +105,8 @@ authorization, distributed quotas, replay protection, and provider spend caps.
 ## Architecture and trust
 
 The application uses React, TypeScript, Vinext, and an exact-pinned
-`pdfjs-dist` browser worker. It has no database, account system, telemetry, or
+`pdfjs-dist` browser worker inlined into the authorization-gated parser module.
+It has no database, account system, telemetry, or
 object storage. The optional server gateway has fixed provider endpoints,
 server-only credentials, no tools, bounded request/response sizes, strict
 structured output, source-quote validation, and `no-store` responses.
@@ -136,8 +139,8 @@ Read the contributor-facing [architecture](docs/ARCHITECTURE.md) and [privacy th
 
 Useful next contributions include accessibility reviews, adversarial PDF
 fixtures, browser network-isolation tests, safe OCR with source coordinates,
-citation evaluation, privacy analysis, translations, and additional narrow
-offer-letter layouts.
+citation evaluation, privacy analysis, translations, dedicated model contracts,
+and additional narrowly verified document types.
 
 - Start with an issue labeled [`good first issue`](https://github.com/anshhu-man/paperwork/labels/good%20first%20issue).
 - Propose a document type with the structured issue form.

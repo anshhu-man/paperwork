@@ -321,6 +321,71 @@ test('the real downloadable PDF completes trusted assembly and binds local autho
   assert.ok(ledger.includes(authorization.planApprovedAt));
 });
 
+test('a structured résumé receives a trusted source-only Action Pack', async () => {
+  const file = offerFile('Resume.pdf', [
+    'Professional Experience',
+    'Product Analyst — Northstar Labs',
+    'Education',
+    'Bachelor of Technology',
+    'Technical Skills',
+    'SQL, research, and data visualization',
+  ]);
+  const result = await analyzeLocalOfferLetterPdfV1(file, { authorization: validAuthorization() });
+
+  assert.equal(result.ok, true, JSON.stringify(result));
+  if (!result.ok) return;
+  assert.equal(isTrustedActionPackV1(result.pack), true);
+  assert.equal(result.pack.analysis.document.documentType, 'resume');
+  assert.equal(result.pack.analysis.document.primaryActionId, 'action.review-resume');
+  assert.deepEqual(result.pack.analysis.actions.map((action) => action.id), ['action.review-resume']);
+  const documentType = result.pack.analysis.claims.find((claim) => claim.id === 'claim.document-title');
+  assert.equal(documentType?.provenance, 'inference');
+  if (documentType?.provenance === 'inference') {
+    assert.deepEqual(documentType.basisClaimIds, [
+      'claim.resume-section-experience',
+      'claim.resume-section-education',
+      'claim.resume-section-skills',
+    ]);
+    assert.match(documentType.rationale, /classified.*section headings/i);
+  }
+  assert.equal(result.pack.analysis.claims.some((claim) => claim.id === 'claim.resume-section-experience'), true);
+  assert.equal(result.pack.analysis.claims.some((claim) => claim.id === 'claim.resume-section-education'), true);
+  assert.equal(result.pack.analysis.claims.some((claim) => claim.id === 'claim.resume-section-skills'), true);
+  assert.equal(result.pack.receipt.transfers.length, 0);
+  assert.equal(
+    result.pack.receipt.components.find((component) => component.component === 'prompt_template')?.name,
+    'Deterministic résumé structure rules',
+  );
+});
+
+test('a generic PDF is not mislabeled as a résumé from one heading', async () => {
+  const file = offerFile('report.pdf', [
+    'Quarterly report',
+    'Education',
+    'This report summarizes training activity.',
+  ]);
+  const result = await analyzeLocalOfferLetterPdfV1(file, { authorization: validAuthorization() });
+
+  assert.equal(result.ok, false);
+  if (!result.ok) {
+    assert.equal(result.stage, 'classification');
+    assert.equal(result.issues[0].code, 'unsupported_document');
+  }
+});
+
+test('a résumé-like filename cannot replace the required three-heading evidence pattern', async () => {
+  const file = offerFile('Resume.pdf', [
+    'Experience',
+    'One role',
+    'Education',
+    'One degree',
+  ]);
+  const result = await analyzeLocalOfferLetterPdfV1(file, { authorization: validAuthorization() });
+
+  assert.equal(result.ok, false);
+  if (!result.ok) assert.equal(result.issues[0].code, 'unsupported_document');
+});
+
 test('a negated role cannot mint trusted offer and sign claims', async () => {
   const file = offerFile('negated-role.pdf', [
     ...BASE_OFFER_LINES.filter((line) => !line.includes('offer you the position')),

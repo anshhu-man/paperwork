@@ -42,6 +42,16 @@ test('baseline changes end a line even when a PDF omits hasEOL', () => {
   assert.deepEqual(lines.map((line) => line.text), ['Offer of Employment', 'Product Analyst']);
 });
 
+test('zero-width empty EOL markers flush the prior line without creating layout ambiguity', () => {
+  const lines = groupPdfTextItemsV1([
+    item('Resume heading', 185, 100, { width: 240 }),
+    item('', 67, 100, { hasEOL: true, width: 0 }),
+    item('Next section', 67, 80, { hasEOL: true, width: 60 }),
+  ], identity);
+
+  assert.deepEqual(lines.map((line) => line.text), ['Resume heading', 'Next section']);
+});
+
 test('large same-baseline gaps become separate cited regions', () => {
   const lines = groupPdfTextItemsV1([
     item('Left column', 10, 100, { width: 55 }),

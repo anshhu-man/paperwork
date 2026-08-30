@@ -14,8 +14,8 @@ The current v0.1 build reads compatible PDF bytes only after two explicit local
 permissions made in order. The trusted assembler rejects stale, future,
 reversed, malformed, and replayed authorization and records both observations
 against a one-use run UUID before source admission. It performs bounded
-native-text extraction in an exact-pinned,
-same-origin browser worker and deterministic offer-letter assembly in the page.
+native-text extraction in an exact-pinned, bundled inline browser worker and
+deterministic offer-letter or résumé-structure assembly in the page.
 The trusted local path does not upload selected document content or extracted
 text to an AI provider or PaperWork backend. An optional model-comparison
 gateway exists but is disabled by default, requires an explicit development

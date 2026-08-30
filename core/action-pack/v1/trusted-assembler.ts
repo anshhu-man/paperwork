@@ -26,7 +26,8 @@ import type {
   LocalPdfProgressV1,
 } from '../../local-analysis/v1/pdf';
 
-const RULESET_VERSION = 'offer-letter-rules-1.1.0';
+const OFFER_RULESET_VERSION = 'offer-letter-rules-1.1.0';
+const RESUME_RULESET_VERSION = 'resume-structure-rules-1.0.0';
 const VALIDATOR_VERSION = 'trusted-local-assembler-1.1.0';
 const AUTHORIZATION_WINDOW_MS = 15 * 60 * 1_000;
 const NORTHSTAR_SAMPLE_FINGERPRINT = '15bf178404e1bd788975b102a5c083f9c2a61c9d91123afdac0377fd81c63e0f';
@@ -104,6 +105,26 @@ interface OfferLetterFactsV1 {
   readonly salary?: { readonly value: ParsedMoneyV1; readonly segment: SourceSegmentV1 };
   readonly location?: { readonly value: string; readonly segment: SourceSegmentV1 };
   readonly probation: readonly ParsedDurationV1[];
+}
+
+type ResumeSectionKeyV1 =
+  | 'summary'
+  | 'experience'
+  | 'education'
+  | 'skills'
+  | 'projects'
+  | 'certifications'
+  | 'achievements'
+  | 'languages';
+
+interface ResumeSectionFactV1 {
+  readonly key: ResumeSectionKeyV1;
+  readonly label: string;
+  readonly segment: SourceSegmentV1;
+}
+
+interface ResumeFactsV1 {
+  readonly sections: NonEmptyArray<ResumeSectionFactV1>;
 }
 
 class AssemblyAuthorityErrorV1 extends Error {
@@ -223,6 +244,63 @@ function safeInterpolatedValue(value: string) {
   if (/[\u0000-\u001f\u007f<>]/.test(value)) return false;
   if (/javascript\s*:|\bon[a-z]+\s*=/i.test(value)) return false;
   return true;
+}
+
+const RESUME_SECTION_RULES_V1: readonly {
+  readonly key: ResumeSectionKeyV1;
+  readonly label: string;
+  readonly pattern: RegExp;
+}[] = [
+  { key: 'summary', label: 'professional summary', pattern: /^(?:professional\s+)?(?:summary|profile|objective)$/i },
+  { key: 'experience', label: 'experience', pattern: /^(?:(?:work|professional|employment)\s+)?(?:experience|history)$/i },
+  { key: 'education', label: 'education', pattern: /^education(?:al\s+background)?$/i },
+  { key: 'skills', label: 'skills', pattern: /^(?:(?:technical|core)\s+)?skills$/i },
+  { key: 'projects', label: 'projects', pattern: /^projects?$/i },
+  { key: 'certifications', label: 'certifications', pattern: /^(?:certifications?|licenses?)$/i },
+  { key: 'achievements', label: 'achievements', pattern: /^(?:achievements?|awards?)$/i },
+  { key: 'languages', label: 'languages', pattern: /^languages?$/i },
+];
+
+function normalizedHeading(text: string) {
+  return text.trim().replace(/[:：]\s*$/, '').trim();
+}
+
+function resumeSectionRule(text: string) {
+  const heading = normalizedHeading(text);
+  return RESUME_SECTION_RULES_V1.find((rule) => rule.pattern.test(heading));
+}
+
+function extractResumeFacts(extraction: LocalPdfExtractionV1): ResumeFactsV1 | undefined {
+  const sections = RESUME_SECTION_RULES_V1.flatMap((rule) => {
+    const segment = extraction.canonicalSources.sourceSegments.find((candidate) => (
+      rule.pattern.test(normalizedHeading(candidate.text))
+    ));
+    return segment ? [{ key: rule.key, label: rule.label, segment }] : [];
+  });
+  const coreSectionCount = sections.filter((section) => (
+    section.key === 'experience' || section.key === 'education' || section.key === 'skills'
+  )).length;
+  if (coreSectionCount < 2 || sections.length < 3) return undefined;
+  return { sections: [sections[0], ...sections.slice(1)] };
+}
+
+function naturalList(values: readonly string[]) {
+  if (values.length === 1) return values[0];
+  if (values.length === 2) return `${values[0]} and ${values[1]}`;
+  return `${values.slice(0, -1).join(', ')}, and ${values.at(-1)}`;
+}
+
+function resumePurposeStatement(facts: ResumeFactsV1) {
+  return `The PDF contains ${naturalList(facts.sections.map((section) => section.label))} section headings.`;
+}
+
+function resumeSectionClaimId(section: ResumeSectionFactV1) {
+  return `claim.resume-section-${section.key}`;
+}
+
+function resumeSectionStatement(section: ResumeSectionFactV1) {
+  const article = /^[aeiou]/i.test(section.label) ? 'an' : 'a';
+  return `The PDF contains ${article} ${section.label} section heading.`;
 }
 
 function evidence(extraction: LocalPdfExtractionV1, segment: SourceSegmentV1): EvidenceRefV1 {
@@ -472,6 +550,63 @@ function buildClaims(
   return claims;
 }
 
+function buildResumeClaims(
+  extraction: LocalPdfExtractionV1,
+  facts: ResumeFactsV1,
+): readonly ClaimDraftV1[] {
+  const sectionEvidence: NonEmptyArray<EvidenceRefV1> = [
+    evidence(extraction, facts.sections[0].segment),
+    ...facts.sections.slice(1).map((section) => evidence(extraction, section.segment)),
+  ];
+  const claims: ClaimDraftV1[] = [
+    {
+      id: 'claim.document-title',
+      provenance: 'inference',
+      title: 'Document type',
+      statement: 'The supplied PDF is structured as a résumé.',
+      materiality: 'material',
+      normalizedValues: [],
+      evidence: sectionEvidence,
+      basisClaimIds: [
+        resumeSectionClaimId(facts.sections[0]),
+        ...facts.sections.slice(1).map(resumeSectionClaimId),
+      ],
+      rationale: 'PaperWork classified the PDF from its combination of cited résumé-style section headings; the document does not need to self-identify with a title.',
+    },
+    {
+      id: 'claim.document-purpose',
+      provenance: 'source_fact',
+      title: 'Document structure',
+      statement: resumePurposeStatement(facts),
+      materiality: 'material',
+      normalizedValues: [],
+      evidence: sectionEvidence,
+    },
+    {
+      id: 'claim.action-required',
+      provenance: 'not_confirmed',
+      title: 'Required action',
+      statement: 'The local résumé rules did not establish a source-imposed action.',
+      materiality: 'supporting',
+      normalizedValues: [],
+      evidence: [],
+      reason: 'A résumé presents information; PaperWork does not invent a deadline or submission requirement that the PDF does not explicitly state.',
+    },
+  ];
+  for (const section of facts.sections) {
+    claims.push({
+      id: resumeSectionClaimId(section),
+      provenance: 'source_fact',
+      title: `${section.label[0].toUpperCase()}${section.label.slice(1)} section`,
+      statement: resumeSectionStatement(section),
+      materiality: 'supporting',
+      normalizedValues: [],
+      evidence: [evidence(extraction, section.segment)],
+    });
+  }
+  return claims;
+}
+
 function verifyEvidence(extraction: LocalPdfExtractionV1, reference: EvidenceRefV1) {
   const segment = extraction.canonicalSources.sourceSegments.find((item) => item.id === reference.segmentId);
   return Boolean(
@@ -480,6 +615,65 @@ function verifyEvidence(extraction: LocalPdfExtractionV1, reference: EvidenceRef
     && segment.sourceRevisionId === extraction.sourceRevisionId
     && segment.text.slice(reference.span.start, reference.span.end) === reference.quote
   );
+}
+
+function verifyResumeClaimSemantics(
+  extraction: LocalPdfExtractionV1,
+  facts: ResumeFactsV1,
+  claims: readonly ClaimDraftV1[],
+) {
+  const byId = new Map(claims.map((claim) => [claim.id, claim]));
+  if (byId.size !== claims.length) return false;
+  const expectedIds = new Set([
+    'claim.document-title',
+    'claim.document-purpose',
+    'claim.action-required',
+    ...facts.sections.map(resumeSectionClaimId),
+  ]);
+  if (claims.length !== expectedIds.size || claims.some((claim) => !expectedIds.has(claim.id))) return false;
+
+  const expectedHeadingSegmentIds = facts.sections.map((section) => section.segment.id);
+  const headingEvidenceIsValid = (references: readonly EvidenceRefV1[]) => (
+    references.length === expectedHeadingSegmentIds.length
+    && references.every((reference, index) => (
+      reference.segmentId === expectedHeadingSegmentIds[index]
+      && verifyEvidence(extraction, reference)
+      && Boolean(resumeSectionRule(reference.quote))
+    ))
+  );
+  const title = byId.get('claim.document-title');
+  if (
+    title?.provenance !== 'inference'
+    || title.statement !== 'The supplied PDF is structured as a résumé.'
+    || !headingEvidenceIsValid(title.evidence)
+    || JSON.stringify(title.basisClaimIds) !== JSON.stringify(facts.sections.map(resumeSectionClaimId))
+    || title.rationale !== 'PaperWork classified the PDF from its combination of cited résumé-style section headings; the document does not need to self-identify with a title.'
+  ) return false;
+  const purpose = byId.get('claim.document-purpose');
+  if (
+    purpose?.provenance !== 'source_fact'
+    || purpose.statement !== resumePurposeStatement(facts)
+    || !headingEvidenceIsValid(purpose.evidence)
+  ) return false;
+  const required = byId.get('claim.action-required');
+  if (
+    required?.provenance !== 'not_confirmed'
+    || required.statement !== 'The local résumé rules did not establish a source-imposed action.'
+    || required.evidence.length !== 0
+    || required.reason !== 'A résumé presents information; PaperWork does not invent a deadline or submission requirement that the PDF does not explicitly state.'
+  ) return false;
+
+  for (const section of facts.sections) {
+    const claim = byId.get(resumeSectionClaimId(section));
+    if (
+      claim?.provenance !== 'source_fact'
+      || claim.statement !== resumeSectionStatement(section)
+      || claim.evidence.length !== 1
+      || !verifyEvidence(extraction, claim.evidence[0])
+      || resumeSectionRule(claim.evidence[0].quote)?.key !== section.key
+    ) return false;
+  }
+  return true;
 }
 
 function hasVerificationDisqualifier(text: string) {
@@ -765,6 +959,39 @@ function buildActionDrafts(facts: OfferLetterFactsV1): readonly ActionDraftV1[] 
   return drafts;
 }
 
+function buildResumeActionDrafts(): readonly ActionDraftV1[] {
+  return [{
+    id: 'action.review-resume',
+    provenance: 'paperwork_suggestion',
+    order: 0,
+    priority: 'normal',
+    title: 'Review this résumé before sharing',
+    description: 'Check that each cited section is current and accurately represents the information you intend to share.',
+    timing: { kind: 'none' },
+    basisClaimIds: ['claim.document-title', 'claim.document-purpose'],
+    requiredInputs: [],
+    sourceImposed: false,
+    execution: 'manual_user_choice',
+  }];
+}
+
+function verifyResumeActionSafety(actions: readonly ActionDraftV1[]) {
+  if (actions.length !== 1) return false;
+  const action = actions[0];
+  return action.id === 'action.review-resume'
+    && action.provenance === 'paperwork_suggestion'
+    && action.order === 0
+    && action.priority === 'normal'
+    && action.title === 'Review this résumé before sharing'
+    && action.description === 'Check that each cited section is current and accurately represents the information you intend to share.'
+    && action.timing.kind === 'none'
+    && JSON.stringify(action.basisClaimIds) === JSON.stringify(['claim.document-title', 'claim.document-purpose'])
+    && action.requiredInputs.length === 0
+    && action.consequence === undefined
+    && action.sourceImposed === false
+    && action.execution === 'manual_user_choice';
+}
+
 function validateActions(actions: readonly ActionDraftV1[], validatedAt: string): readonly ValidatedActionV1[] {
   return actions.map((action) => ({
     ...action,
@@ -890,6 +1117,7 @@ function verifyEventLedger(
   extraction: LocalPdfExtractionV1,
   analysisId: string,
   authorization: ValidatedLocalAuthorizationV1,
+  analysisActorName: string,
 ) {
   const expected = ['local_read_authorized', 'local_plan_authorized', 'source_admitted', 'extraction_completed', 'analysis_completed', 'validation_completed'];
   const expectedActors = [
@@ -897,7 +1125,7 @@ function verifyEventLedger(
     'PaperWork local plan authorization',
     'PaperWork local PDF admission',
     'PaperWork local PDF extractor',
-    'PaperWork deterministic offer-letter rules',
+    analysisActorName,
     'PaperWork independent trusted assembler',
   ];
   if (events.length !== expected.length) return false;
@@ -925,6 +1153,18 @@ function finalAuthorityGate(
   sampleFixtureId?: string,
 ) {
   if (pack.runMode !== (sampleFixtureId ? 'sample_fixture' : 'live') || pack.receipt.processingMode !== 'browser_local') return false;
+  const documentType = pack.analysis.document.documentType;
+  if (
+    (sampleFixtureId && documentType !== 'synthetic_employment_offer_fixture')
+    || (!sampleFixtureId && documentType !== 'employment_offer' && documentType !== 'resume')
+  ) return false;
+  const resume = documentType === 'resume';
+  const expectedAnalysisActor = resume
+    ? 'PaperWork deterministic résumé rules'
+    : 'PaperWork deterministic offer-letter rules';
+  const expectedRuleset = resume
+    ? { name: 'Deterministic résumé structure rules', version: RESUME_RULESET_VERSION }
+    : { name: 'Deterministic offer-letter rules', version: OFFER_RULESET_VERSION };
   if (pack.receipt.transfers.length > 0 || pack.receipt.consentRecords.length > 0 || pack.receipt.externalReferences.length > 0) return false;
   if (pack.corrections.length > 0 || pack.receipt.correctionIds.length > 0) return false;
   if (
@@ -955,7 +1195,7 @@ function finalAuthorityGate(
       || segment.extraction.version !== extraction.parserVersion
     ))
   ) return false;
-  if (!verifyEventLedger(pack.receipt.events, extraction, pack.analysis.analysisId, authorization)) return false;
+  if (!verifyEventLedger(pack.receipt.events, extraction, pack.analysis.analysisId, authorization, expectedAnalysisActor)) return false;
   const validationCompletedAt = pack.receipt.events[5]?.occurredAt;
   if (
     !validationCompletedAt
@@ -972,7 +1212,12 @@ function finalAuthorityGate(
   if (browserRetention.length !== 1 || browserRetention[0].state !== 'status_unavailable') return false;
   const componentKinds = new Set(pack.receipt.components.map((component) => component.component));
   if (componentKinds.has('provider_model') || componentKinds.has('ocr')) return false;
-  return componentKinds.has('paperwork') && componentKinds.has('parser') && componentKinds.has('citation_validator');
+  const rulesets = pack.receipt.components.filter((component) => component.component === 'prompt_template');
+  if (rulesets.length !== 1 || rulesets[0].name !== expectedRuleset.name || rulesets[0].version !== expectedRuleset.version) return false;
+  return componentKinds.has('paperwork')
+    && componentKinds.has('parser')
+    && componentKinds.has('prompt_template')
+    && componentKinds.has('citation_validator');
 }
 
 export async function analyzeLocalOfferLetterPdfV1(
@@ -1016,20 +1261,43 @@ export async function analyzeLocalOfferLetterPdfV1(
     }
 
     options.onProgress?.({ stage: 'assembling' });
-    const facts = extractOfferLetterFacts(extraction);
-    const canonicalSources = facts.sampleFixtureId ? {
+    let offerFacts: OfferLetterFactsV1 | undefined;
+    let resumeFacts: ResumeFactsV1 | undefined;
+    try {
+      offerFacts = extractOfferLetterFacts(extraction);
+    } catch (error) {
+      if (!(error instanceof AssemblyAuthorityErrorV1) || error.code !== 'unsupported_document') throw error;
+      resumeFacts = extractResumeFacts(extraction);
+      if (!resumeFacts) throw error;
+    }
+    const sampleFixtureId = offerFacts?.sampleFixtureId;
+    const isResume = Boolean(resumeFacts);
+    const analysisActorName = isResume
+      ? 'PaperWork deterministic résumé rules'
+      : 'PaperWork deterministic offer-letter rules';
+    const rulesetVersion = isResume ? RESUME_RULESET_VERSION : OFFER_RULESET_VERSION;
+    const rulesetName = isResume ? 'Deterministic résumé structure rules' : 'Deterministic offer-letter rules';
+    const canonicalSources = sampleFixtureId ? {
       ...extraction.canonicalSources,
       sources: extraction.canonicalSources.sources.map((source) => ({
         ...source,
-        origin: { kind: 'sample' as const, fixtureId: facts.sampleFixtureId! },
+        origin: { kind: 'sample' as const, fixtureId: sampleFixtureId },
       })),
     } : extraction.canonicalSources;
-    const claimDrafts = buildClaims(extraction, facts);
-    if (!verifyClaimSemantics(extraction, facts, claimDrafts)) {
+    const claimDrafts = resumeFacts
+      ? buildResumeClaims(extraction, resumeFacts)
+      : buildClaims(extraction, offerFacts!);
+    const claimsVerified = resumeFacts
+      ? verifyResumeClaimSemantics(extraction, resumeFacts, claimDrafts)
+      : verifyClaimSemantics(extraction, offerFacts!, claimDrafts);
+    if (!claimsVerified) {
       throw new AssemblyAuthorityErrorV1('claim_validation', 'claim_validation_failed');
     }
-    const actionDrafts = buildActionDrafts(facts);
-    if (!verifyActionSafety(actionDrafts, facts)) {
+    const actionDrafts = resumeFacts ? buildResumeActionDrafts() : buildActionDrafts(offerFacts!);
+    const actionsVerified = resumeFacts
+      ? verifyResumeActionSafety(actionDrafts)
+      : verifyActionSafety(actionDrafts, offerFacts!);
+    if (!actionsVerified) {
       throw new AssemblyAuthorityErrorV1('action_safety', 'action_safety_failed');
     }
 
@@ -1040,19 +1308,25 @@ export async function analyzeLocalOfferLetterPdfV1(
       .filter((claim) => claim.provenance === 'source_fact' || claim.provenance === 'inference')
       .map((claim) => claim.id);
     const briefClaimIds = ['claim.document-title', 'claim.document-purpose', 'claim.action-required'];
-    if (facts.deadline) briefClaimIds.push('claim.acceptance-deadline');
-    const attentionClaimIds = facts.deadline ? ['claim.acceptance-deadline'] : [];
+    if (offerFacts?.deadline) briefClaimIds.push('claim.acceptance-deadline');
+    const attentionClaimIds = offerFacts?.deadline ? ['claim.acceptance-deadline'] : [];
     if (conflictPresent) attentionClaimIds.push('claim.probation-conflict');
     const planActionIds = actionDrafts.map((action) => action.id);
-    const document = {
-      documentType: facts.sampleFixtureId ? 'synthetic_employment_offer_fixture' : 'employment_offer',
+    const document = resumeFacts ? {
+      documentType: 'resume',
       titleClaimId: 'claim.document-title',
       purposeClaimId: 'claim.document-purpose',
       actionRequiredClaimId: 'claim.action-required',
-      ...(facts.deadline ? { nearestDeadlineClaimId: 'claim.acceptance-deadline' } : {}),
-      primaryActionId: facts.sampleFixtureId ? 'action.inspect-sample' : 'action.sign-and-return',
+      primaryActionId: 'action.review-resume',
+    } : {
+      documentType: sampleFixtureId ? 'synthetic_employment_offer_fixture' : 'employment_offer',
+      titleClaimId: 'claim.document-title',
+      purposeClaimId: 'claim.document-purpose',
+      actionRequiredClaimId: 'claim.action-required',
+      ...(offerFacts?.deadline ? { nearestDeadlineClaimId: 'claim.acceptance-deadline' } : {}),
+      primaryActionId: sampleFixtureId ? 'action.inspect-sample' : 'action.sign-and-return',
     };
-    const questions = conflictPresent && !facts.sampleFixtureId ? [{
+    const questions = conflictPresent && !sampleFixtureId ? [{
       id: 'question.probation-term',
       text: 'Which probation duration is intended to govern this offer?',
       reason: 'Distinct passages state different probation durations.',
@@ -1062,7 +1336,7 @@ export async function analyzeLocalOfferLetterPdfV1(
       briefClaimIds,
       factClaimIds,
       attentionClaimIds,
-      missingInformationClaimIds: ['claim.late-response-consequence'],
+      missingInformationClaimIds: resumeFacts ? [] : ['claim.late-response-consequence'],
       conflictClaimIds: conflictPresent ? ['claim.probation-conflict'] : [],
       planActionIds,
     };
@@ -1117,7 +1391,7 @@ export async function analyzeLocalOfferLetterPdfV1(
         occurredAt: analysisAt,
         type: 'analysis_completed',
         status: 'completed',
-        actor: { location: 'browser', name: 'PaperWork deterministic offer-letter rules' },
+        actor: { location: 'browser', name: analysisActorName },
         relatedId: analysisId,
       },
       {
@@ -1130,7 +1404,7 @@ export async function analyzeLocalOfferLetterPdfV1(
         relatedId: analysisId,
       },
     ] as const satisfies readonly ProcessingEventV1[];
-    if (!verifyEventLedger(events, extraction, analysisId, authorization)) {
+    if (!verifyEventLedger(events, extraction, analysisId, authorization, analysisActorName)) {
       throw new AssemblyAuthorityErrorV1('event_ledger', 'event_ledger_failed');
     }
 
@@ -1140,7 +1414,7 @@ export async function analyzeLocalOfferLetterPdfV1(
       schemaVersion: ACTION_PACK_SCHEMA_VERSION_V1,
       packId: `pack.${extraction.fingerprint.slice(0, 16)}.${runFragment}`,
       createdAt: assembledAt,
-      runMode: facts.sampleFixtureId ? 'sample_fixture' : 'live',
+      runMode: sampleFixtureId ? 'sample_fixture' : 'live',
       canonicalSources,
       analysis: {
         kind: VALIDATED_ANALYSIS_KIND_V1,
@@ -1180,7 +1454,7 @@ export async function analyzeLocalOfferLetterPdfV1(
         components: [
           { component: 'paperwork', name: 'PaperWork local analyzer', version: ACTION_PACK_SCHEMA_VERSION_V1 },
           { component: 'parser', name: 'pdfjs-dist', version: extraction.parserVersion },
-          { component: 'prompt_template', name: 'Deterministic offer-letter rules', version: RULESET_VERSION },
+          { component: 'prompt_template', name: rulesetName, version: rulesetVersion },
           { component: 'citation_validator', name: 'PaperWork trusted assembler', version: VALIDATOR_VERSION },
         ],
         validationSummary: validationSummary(claims, actions),
@@ -1188,9 +1462,14 @@ export async function analyzeLocalOfferLetterPdfV1(
         correctionIds: [],
       },
       corrections: [],
-      limitations: [
-        ...(facts.sampleFixtureId ? ['This recognized synthetic fixture is for demonstration only; do not sign or submit it.'] : []),
-        'This first local ruleset recognizes explicit English-language employment-offer terms only.',
+      limitations: resumeFacts ? [
+        'This local résumé ruleset verifies document structure and cited section headings; it does not judge candidate quality or make hiring claims.',
+        'A deeper résumé model review is not enabled until a dedicated output contract is independently validated.',
+        'Scanned PDFs are withheld because OCR is not enabled.',
+        'PaperWork provides source-grounded organization, not career, legal, or employment advice.',
+      ] : [
+        ...(sampleFixtureId ? ['This recognized synthetic fixture is for demonstration only; do not sign or submit it.'] : []),
+        'This local offer-letter ruleset recognizes explicit English-language employment-offer terms only.',
         'Scanned PDFs and ambiguous numeric dates are withheld because OCR and date disambiguation are not enabled.',
         'PaperWork provides source-grounded organization, not legal, financial, or employment advice.',
       ],
@@ -1201,7 +1480,7 @@ export async function analyzeLocalOfferLetterPdfV1(
       void formatContractIssuesV1(parsedPack.issues);
       throw new AssemblyAuthorityErrorV1('contract', 'contract_validation_failed');
     }
-    if (!finalAuthorityGate(parsedPack.data, extraction, authorization, facts.sampleFixtureId)) {
+    if (!finalAuthorityGate(parsedPack.data, extraction, authorization, sampleFixtureId)) {
       throw new AssemblyAuthorityErrorV1('contract', 'contract_validation_failed');
     }
 

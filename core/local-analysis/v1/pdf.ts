@@ -1,8 +1,10 @@
-import type {
-  PDFDocumentLoadingTask,
-  PDFWorker,
+import {
+  getDocument,
+  type PDFDocumentLoadingTask,
+  PDFWorker as PdfJsPdfWorker,
+  version as pdfJsVersion,
 } from 'pdfjs-dist';
-import PdfJsWorker from 'pdfjs-dist/build/pdf.worker.min.mjs?worker';
+import PdfJsWorker from 'pdfjs-dist/build/pdf.worker.min.mjs?worker&inline';
 
 import type {
   CanonicalSourceContextV1,
@@ -204,7 +206,7 @@ export async function extractLocalPdfV1(
 
   const guard = createLocalPdfOperationGuardV1(signal);
   let workerPort: Worker | undefined;
-  let pdfWorker: PDFWorker | undefined;
+  let pdfWorker: InstanceType<typeof PdfJsPdfWorker> | undefined;
   let loadingTask: PDFDocumentLoadingTask | undefined;
   let loadingTaskDestroy: Promise<void> | undefined;
   let activeReaderCancel: (() => Promise<void>) | undefined;
@@ -237,14 +239,6 @@ export async function extractLocalPdfV1(
     const sourceId = `source.${fingerprint.slice(0, 24)}`;
     const sourceRevisionId = `revision.${fingerprint.slice(0, 24)}`;
 
-    let pdfJs: typeof import('pdfjs-dist');
-    try {
-      pdfJs = await guard.wait(import('pdfjs-dist'));
-    } catch (error) {
-      if (error instanceof LocalPdfExtractionErrorV1) throw error;
-      throw new LocalPdfExtractionErrorV1('extractor_unavailable');
-    }
-
     try {
       if (globalThis.location.origin === 'null') {
         throw new LocalPdfExtractionErrorV1('extractor_unavailable');
@@ -253,14 +247,14 @@ export async function extractLocalPdfV1(
       workerErrorHandler = () => guard.stop('extractor_unavailable');
       workerPort.addEventListener('error', workerErrorHandler, { once: true });
       workerPort.addEventListener('messageerror', workerErrorHandler, { once: true });
-      pdfWorker = pdfJs.PDFWorker.create({ port: workerPort });
+      pdfWorker = PdfJsPdfWorker.create({ port: workerPort });
     } catch (error) {
       if (error instanceof LocalPdfExtractionErrorV1) throw error;
       throw new LocalPdfExtractionErrorV1('extractor_unavailable');
     }
 
     const pdfBytes = new Uint8Array(inputBuffer.slice(0));
-    loadingTask = pdfJs.getDocument({
+    loadingTask = getDocument({
       data: pdfBytes,
       worker: pdfWorker,
       stopAtErrors: true,
@@ -375,7 +369,7 @@ export async function extractLocalPdfV1(
             extraction: {
               method: 'native_text',
               engine: 'pdfjs-dist',
-              version: pdfJs.version,
+              version: pdfJsVersion,
               extractedAt: new Date().toISOString(),
             },
           });
@@ -451,7 +445,7 @@ export async function extractLocalPdfV1(
       sourceId,
       sourceRevisionId,
       fingerprint,
-      parserVersion: pdfJs.version,
+      parserVersion: pdfJsVersion,
       admittedAt,
       extractedAt,
       observedEvents,

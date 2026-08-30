@@ -80,6 +80,20 @@ export function groupPdfTextItemsV1(
     if (!rawItem || typeof rawItem !== 'object' || !('str' in rawItem)) continue;
     const item = rawItem as TextItemLikeV1;
     if (typeof item.str !== 'string') continue;
+    const text = item.str.replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, '');
+
+    // pdf.js may emit a zero-width, empty item whose only purpose is to mark
+    // the end of the preceding visual line. Its x-coordinate is not text
+    // geometry and can legitimately jump backwards (common in exported CVs).
+    // Treat it solely as a boundary so it cannot create evidence or trigger a
+    // false non-monotonic-layout rejection.
+    if (!text.trim()) {
+      if (item.hasEOL) {
+        flushLine(current, output);
+        current = undefined;
+      }
+      continue;
+    }
     if (
       !Array.isArray(item.transform)
       || item.transform.length !== 6
@@ -89,8 +103,6 @@ export function groupPdfTextItemsV1(
       || item.width < 0
       || item.height < 0
     ) throw new PdfLayoutAmbiguityErrorV1('invalid_text_geometry');
-    const text = item.str.replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, '');
-    if (!text.trim() && !item.hasEOL) continue;
 
     const transform = multiplyTransform(viewportTransform, item.transform);
     if (transform.some((value) => !Number.isFinite(value))) {

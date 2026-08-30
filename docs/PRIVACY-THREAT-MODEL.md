@@ -11,14 +11,14 @@ planned control is not a security or privacy guarantee.
 PaperWork now has one narrow real-processing mode. After two explicit local
 permissions, it reads a selected PDF in the current browser tab, verifies its
 file signature and limits, computes SHA-256, and sends a private byte copy to a
-same-origin bundled `pdfjs-dist` module worker. Every page must produce
-meaningful native text. PaperWork then runs deterministic English offer-letter
-rules, independent semantic/citation/action/event checks, and renders only a
-privately registered `TrustedActionPackV1`.
+bundled inline `pdfjs-dist` module worker. Every page must produce meaningful
+native text. PaperWork then runs deterministic English offer-letter or
+résumé-structure rules, independent semantic/citation/action/event checks, and
+renders only a privately registered `TrustedActionPackV1`.
 
 The trusted local run sends no selected PDF bytes or extracted text to an AI
 provider or PaperWork document-processing server. After that run, a separate
-Model Council workspace may be enabled for local development testing. The original
+offer-letter-only Model Council workspace may be enabled for local development testing. The original
 PDF bytes still never enter that path. A user must choose provider recipients,
 select unchanged extracted passages, inspect the exact logical payload and its
 SHA-256 digest, and give digest-bound approval before the browser sends those
@@ -63,9 +63,9 @@ Application assets: hosting service -> browser
 Selected PDF: user -> browser file input -> explicit local permission
                    -> fresh, ordered, one-use authorization ledger
                    -> byte signature/limits/SHA-256
-                   -> same-origin local PDF worker
+                   -> bundled inline local PDF worker
                    -> immutable page-region source segments
-                   -> deterministic offer-letter rules
+                   -> deterministic document-specific rules
                    -> independent semantic/action/event validation
                    -> private trusted-pack registration -> result UI
 

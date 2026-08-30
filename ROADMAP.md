@@ -1,16 +1,16 @@
 # PaperWork roadmap
 
 PaperWork turns difficult paperwork into an evidence-backed action plan. The
-roadmap deliberately starts with one narrow, testable job: helping someone
-understand a real employment offer letter without confusing generated guidance
-with the words in the document.
+roadmap deliberately starts with narrow, testable jobs: helping someone
+understand a real employment offer letter and recognize a résumé's structure
+without confusing generated guidance with the words in the document.
 
-## Now — v0.1: offer-letter analysis
+## Now — v0.1: offer-letter analysis + résumé structure
 
 ### Milestone achieved — native-text PDF + trusted local assembler
 
 - [x] Accept one real PDF, verify its byte signature, cap it at 10 MB and 50
-  pages, compute SHA-256, and extract every page in a same-origin browser worker.
+  pages, compute SHA-256, and extract every page in a bundled inline browser worker.
 - [x] Preserve immutable native-text segments with exact UTF-16 evidence spans,
   normalized page regions, parser version, and observed extraction events.
 - [x] Recognize a deliberately narrow set of explicit English offer terms with
@@ -28,6 +28,9 @@ with the words in the document.
 - [x] Recognize the public synthetic PDF by its immutable byte fingerprint,
   preserve `sample_fixture` provenance even after manual re-upload, and replace
   executable-looking document requirements with a do-not-submit sample action.
+- [x] Recognize structured résumés from at least three cited section headings,
+  keep the document identity visibly labelled as an inference, and block résumé
+  text from the offer-letter-only Model Council contract.
 
 The remaining v0.1 release gates below still apply before broad promotion.
 
