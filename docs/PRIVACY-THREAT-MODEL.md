@@ -18,6 +18,12 @@ result of inspecting the selected source. There is no application database,
 object store, account system, telemetry integration, or AI integration in this
 repository.
 
+Versioned Action Pack transport contracts and adversarial tests now exist in
+`core/action-pack/v1`, but they are not connected to the UI. A structurally
+valid pack is deliberately non-renderable: no trusted assembler exists yet to
+combine independently observed source, semantic-validation, action-safety, and
+processing-event ledgers.
+
 The host still serves the application and may receive ordinary web-request
 metadata such as an IP address, user agent, requested path, and time. Browser
 extensions, browser history, caches, operating-system facilities, and hosting
@@ -68,6 +74,7 @@ source
   -> optional model/provider boundary
   -> structured claims and actions
   -> citation and policy validation
+  -> trusted-ledger assembly
   -> Action Pack and analysis receipt
 ```
 
@@ -89,6 +96,7 @@ not appear as product promises until they are implemented and testable.
 | A parser or OCR library is exploited | Run untrusted parsing with least privilege and resource limits; validate file signatures; cap pages, pixels, archive expansion, and processing time; patch dependencies. |
 | Temporary data or logs expose source content | Do not log source content by default; keep secrets out of URLs and errors; document every storage location and lifetime; test cleanup paths. |
 | Generated advice is unsupported or misleading | Require structured claims, source anchors, and citation validation; block or downgrade unsupported claims; keep professional-advice warnings specific and visible. |
+| A provider self-attests its own citations, safety checks, or receipt | Treat provider and imported Action Pack JSON as structural transport only; assemble renderable output exclusively from separately trusted source, semantic-validation, action-safety, and event ledgers. |
 | Citations point to the wrong passage | Preserve page/region/character anchors; verify that cited text supports each claim; allow OCR correction and revalidation. |
 | Data leaks between users or sessions | Isolate sessions and caches; use unpredictable identifiers; authorize every read; add cross-tenant tests before introducing persistence. |
 | Credentials are exposed | Keep provider keys out of source control, client bundles, logs, and receipts; use scoped secrets and clear bring-your-own-key boundaries. |
@@ -140,6 +148,7 @@ sharing feature is enabled:
 1. Update this threat model and the user-facing data-flow disclosure.
 2. Add tests that prove what is and is not transmitted.
 3. Add abuse limits, parser/fetch isolation, and citation validation.
+   Structural schema validation alone does not satisfy this gate.
 4. Document retention for PaperWork and every external processor.
 5. Provide a payload preview and explicit consent for external transfer.
 6. Complete a security review covering the newly introduced trust boundaries.

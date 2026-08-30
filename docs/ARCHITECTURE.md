@@ -4,8 +4,9 @@ PaperWork aims to turn supplied sources into an evidence-backed Action Pack
 while showing users what came from a source, what was inferred, what is only a
 suggestion, and where their data went.
 
-This document describes both the current sample frontend and a proposed
-production architecture. Sections marked **Planned** are not implemented.
+This document describes the current sample frontend, the implemented v1 trust
+contracts, and a proposed production architecture. Sections marked **Planned**
+are not implemented.
 
 ## What exists today
 
@@ -18,7 +19,7 @@ for Cloudflare Worker-compatible hosting.
 | File input | Reads the selected file's name, MIME type, and size for display. It does not read file contents. |
 | Link input | Stores and displays the entered URL in page state. It does not fetch the URL. |
 | Processing | A timer advances through illustrative steps. No extraction, OCR, or analysis occurs. |
-| Results | A fixed sample offer-letter Action Pack and fixed evidence fixtures are rendered for every source. |
+| Results | A fixed sample offer-letter Action Pack is available only through the clearly labeled sample path. Live analysis of staged sources is not connected. |
 | Follow-up question | Returns a prepared sample answer; it does not inspect the question or source. |
 | Transparency receipt | Displays static facts about sample mode; it is not an audit-generated receipt or deletion proof. |
 | State | React component memory only. Task completion and other state disappear when the page lifecycle ends or reloads. |
@@ -44,8 +45,12 @@ vite.config.ts        Vinext, Sites, and Cloudflare build integration
 next.config.ts        Next-compatible configuration
 ```
 
-There are currently no domain, ingestion, extraction, model, validation,
-receipt, storage, or server API modules.
+The repository includes strict, versioned runtime contracts for canonical
+sources, model drafts, validated analyses, Action Packs, processing events,
+consent, transfers, corrections, and receipts in `core/action-pack/v1`. It does
+not yet include ingestion, extraction, model-provider, persistence, or server
+API modules. The current result UI still uses its presentation fixture while
+the validated domain bundle is integrated incrementally.
 
 ## Architectural invariants
 
@@ -110,9 +115,41 @@ PaperWork service, or a third-party provider is intentionally undecided here.
 Each shipped mode must document its real execution location and network path;
 contributors must not label a mode "local" merely because its UI is local.
 
-## Planned domain contracts
+## Implemented v1 domain contracts
 
-Keep transport and provider details outside the core evidence model.
+The `core/action-pack/v1` module keeps transport and provider details outside
+the evidence model and rejects malformed or over-privileged data at runtime.
+Its boundary is:
+
+```text
+untrusted provider response
+        |
+        v
+strict ModelDraftV1 parser
+        |
+        v
+PaperWork validation + canonical source/event ledgers
+        |
+        v
+strict ActionPackV1 parser
+        |
+        v
+structurally valid transport data
+        |
+        v
+trusted-ledger assembler (not implemented)
+        |
+        v
+TrustedActionPackV1 -> renderable domain data
+```
+
+The model may propose claims, actions, questions, and section membership. It
+cannot author canonical source records, claim validation attestations, consent,
+transfer history, retention status, corrections, or receipts. Unknown fields
+are rejected rather than ignored. Structural parsing never turns external JSON
+into trusted render input; only a PaperWork-owned assembler may do that after
+independent semantic-support, action-safety, canonical-source, and event-ledger
+checks. That assembler is intentionally still unavailable.
 
 - `SourceDescriptor`: user-visible identity, media type, size, origin, and a
   source fingerprint.
@@ -120,18 +157,19 @@ Keep transport and provider details outside the core evidence model.
   or image-region coordinates and extraction provenance.
 - `EvidenceRef`: one or more segment identifiers plus the exact supporting
   span.
-- `Claim`: statement, evidence status, evidence references, concise rationale,
-  and validation state.
+- `Claim`: statement, typed dates/amounts/durations, evidence status, evidence
+  references, concise rationale, and citation/semantic validation state.
 - `Action`: user task, priority, due date, consequence, required inputs, and the
-  claim or suggestion that justifies it.
+  claim or suggestion that justifies it, plus basis/timing/safety validation.
 - `ActionPack`: brief, facts, actions, risks, missing information, conflicts,
   questions, and source manifest.
 - `ProcessingEvent`: timestamped observation emitted by a real pipeline stage.
 - `AnalysisReceipt`: a projection of processing events, transfer disclosures,
   versions, validation results, and attributed retention/deletion states.
 
-Schemas should be versioned, validated at every boundary, and designed so an
-Action Pack can be regenerated when OCR text or a source fact is corrected.
+The v1 schemas are fixed to `1.0.0`, validate every object strictly, clone and
+deep-freeze accepted input, and model corrections as append-only revisions.
+Later schema changes require explicit migration followed by full revalidation.
 
 ## Evidence lifecycle
 
@@ -204,9 +242,10 @@ ui/            source review, payload consent, evidence viewer, and Action Pack
 evals/         citation, extraction, injection, privacy, and regression suites
 ```
 
-This is a target organization, not a declaration that these modules exist.
-Interfaces should permit fake providers and fixture sources so privacy and
-evidence behavior can be tested without transmitting real documents.
+Only `core/action-pack/v1` exists from this target organization today. The
+remaining directories are proposed. Interfaces should permit fake providers
+and fixture sources so privacy and evidence behavior can be tested without
+transmitting real documents.
 
 ## Contributor checklist
 
