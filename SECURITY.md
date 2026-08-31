@@ -35,29 +35,52 @@ entire analysis. Passing these checks proves traceability to the approved text,
 not that the model interpreted that text correctly; accepted results require
 human review.
 
-PaperWork has no application database, account system, telemetry, object
-storage, URL fetcher, or OCR service. The selected model receives the approved
-extracted passages and fixed instruction framing, not the original PDF. Hosting
+PaperWork has no document database, account system, telemetry, object storage,
+URL fetcher, or OCR service. The hosted invite beta uses D1 only for bounded
+admission metadata: hashes of anonymous session/grant credentials, a random
+request ID, target configuration, approved payload digest and byte count,
+timestamps, conservative cost units, short concurrency leases, and delivery
+state. It does not store PDF bytes, passages, filenames, prompts, model output,
+raw access passes, raw credentials, or raw IP addresses. The selected model
+receives the approved extracted passages and fixed instruction framing, not the original PDF. Hosting
 infrastructure, the PaperWork gateway on hosted runs, configured model
 providers, normal application-asset requests, browser extensions, device
 facilities, and network infrastructure remain separate trust boundaries. Their
 operators may retain logs under policies PaperWork cannot verify or delete.
-`Cache-Control: no-store` and the absence of intentional application
-persistence are not proof of infrastructure-level non-retention.
+`Cache-Control: no-store` and the application's metadata limits are not proof
+of infrastructure-level non-retention.
 
-Missing, test, production, and unexpected environment values fail closed, and
-non-loopback analysis requests are rejected. A future public design must first
-add real authentication or invite quotas, distributed rate limits, replay
-protection, secret management, and provider spend caps, then pass a separate
-security review.
+Missing, test, malformed, and incomplete production values fail closed. Local
+analysis requires loopback development. Production requires one exact HTTPS
+origin, one explicitly selected hosted provider, a strong invite-pass digest,
+a restricted server-only provider key, an operator-confirmed provider hard
+spend cap, and the D1 binding. A short-lived `Secure; HttpOnly;
+SameSite=Strict` anonymous session is exchanged for a one-use run grant bound
+to the request ID, provider/model/recipient, digest, byte count, and consent
+time. D1 atomically consumes the grant and reserves per-session/global budget
+and concurrency before delivery. Attempts with uncertain delivery are not
+refunded.
 
-Browser-direct Ollama accepts only canonical `localhost` or `127.0.0.1` HTTP
-origins and omits browser credentials, redirects, referrers, tools, retrieval,
-the source fingerprint, and PDF bytes. A network error, cancellation, or
-timeout stops PaperWork from waiting but does not prove that the local Ollama
-process stopped or discarded a request it already received.
+The application also sends a restrictive CSP, `frame-ancestors 'none'`, HSTS
+in production, `nosniff`, no-referrer, cross-origin isolation hints, and a
+narrow Permissions Policy. The route requires its configured exact origin and
+same-origin browser fetch metadata; these CSRF controls complement rather than
+replace the anonymous session and grant.
 
-Any future OCR, URL fetching, public model-gateway enablement, persistent
-server-side processing, storage, telemetry, export, or sharing capability must
+The shared invite pass is not intended for an unrestricted public launch. A
+broadly advertised anonymous service still requires a separately reviewed
+identity or bot challenge and edge burst limit. The
+`PAPERWORK_PROVIDER_SPEND_CAP_CONFIGURED` value records operator intent only;
+it cannot verify the provider-side cap.
+
+The browser-direct Ollama recipient accepts only canonical `localhost` or
+`127.0.0.1` HTTP origins; the PaperWork page may also use the IPv6 loopback
+`[::1]`. The request omits browser credentials, redirects, referrers, tools,
+retrieval, the source fingerprint, and PDF bytes. A network error,
+cancellation, or timeout stops PaperWork from waiting but does not prove that
+the local Ollama process stopped or discarded a request it already received.
+
+Any future OCR, URL fetching, unrestricted public model access, persistent
+document processing, storage, telemetry, export, or sharing capability must
 update the [privacy threat model](docs/PRIVACY-THREAT-MODEL.md), user-facing
 data-flow receipt, and negative transmission tests before release.

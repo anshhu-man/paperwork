@@ -5,7 +5,7 @@ roadmap deliberately starts with narrow, testable jobs: helping someone
 understand a real employment offer letter and recognize a résumé's structure
 without confusing generated guidance with the words in the document.
 
-## Now — v0.1: offer-letter analysis + résumé structure
+## Now — v0.1: generic document agent + invite-only hosted beta
 
 ### Milestone achieved — native-text PDF + trusted local assembler
 
@@ -33,6 +33,24 @@ without confusing generated guidance with the words in the document.
   text from the offer-letter-only Model Council contract.
 
 The remaining v0.1 release gates below still apply before broad promotion.
+
+### Milestone achieved — LLM document agent + online admission boundary
+
+- [x] Show the exact locally extracted passages, one provider/model/recipient,
+  canonical byte count, and SHA-256 digest before a separate send approval.
+- [x] Accept one closed provider report for résumés, offers, contracts, invoices,
+  letters, forms and other documents; independently validate every source
+  revision, segment, page, span, quote, typed value, target and receipt.
+- [x] Keep models out of the rendering boundary: providers return typed data,
+  while PaperWork owns the webpage copy, components and manual-only actions.
+- [x] Preserve browser-direct Ollama for canonical loopback HTTP and provide
+  fixed server-only adapters for OpenAI, Claude, Mistral and DeepSeek.
+- [x] Add a fail-closed invite-only production route with an exact HTTPS origin,
+  short-lived anonymous HTTP-only sessions, one-use digest/target-bound grants,
+  D1-backed replay/quota/cost/concurrency admission, one public provider, and
+  production security headers.
+- [x] Keep D1 metadata-only and R2 absent; no PDF bytes, passages, prompts,
+  filenames or model output enter application persistence.
 
 ### Real analysis path
 
@@ -123,10 +141,11 @@ the product as a work in progress.
   comparison, and clearly attributed conflicts.
 - Add specialized packs for academic notices, applications, invoices, and
   employment policies only after each has its own evaluation set.
-- Harden the implemented provider-neutral comparison gateway with invite
-  quotas, distributed rate limits, durable replay protection, spend caps,
-  provider conformance tests, and deployment-specific secret management before
-  designing any public enablement path.
+- Replace the shared private-beta pass with a separately reviewed identity or
+  server-validated bot boundary and an edge burst limit before unrestricted
+  anonymous access. Keep the implemented D1 quotas, durable one-use grants,
+  concurrency leases, provider conformance tests, exact-origin enforcement,
+  secret management and provider-side spend cap.
 - Export plans and privacy receipts as accessible PDF and JSON; share a plan
   without sharing its original sources.
 - Publish evaluation results, known limitations, correction history, and a

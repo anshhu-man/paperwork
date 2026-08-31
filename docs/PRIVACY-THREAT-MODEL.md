@@ -1,6 +1,6 @@
 # PaperWork privacy threat model
 
-Status: draft for the v0.1 LLM-first document-agent milestone.
+Status: draft for the v0.1 LLM-first document agent and invite-only hosted beta.
 
 This document separates behavior that exists today from intended behavior. A
 planned control is not a security or privacy guarantee.
@@ -32,13 +32,21 @@ human review. Citation matching proves traceability to approved text, not the
 correctness of the model's classification or interpretation.
 
 The hosted gateway does not intentionally persist or log document bodies, and
-responses use `Cache-Control: no-store`. These controls do not prove that
-provider, gateway-host, or network infrastructure retained nothing. Their logs,
-retention, training controls, and deletion capabilities are governed by their
-operators. There is no application database, object store, account system,
-telemetry integration, URL fetcher, or OCR service. Page state remains in memory
-for the current lifecycle, and PaperWork does not claim independently verifiable
-memory deletion.
+responses use `Cache-Control: no-store`. Invite mode has one application
+database purpose: D1 stores short-lived admission metadata—hashed anonymous
+session and grant credentials, random request ID, exact target, approved payload
+digest and byte count, timestamps, conservative cost units, lease, and delivery
+state. It does not store PDF bytes, passages, filenames, source fingerprints,
+prompts, model output, raw passes/tokens, or raw IP addresses. Records become
+eligible for opportunistic pruning after 24 hours by default. This is not a
+guaranteed deletion deadline without an operator-scheduled D1 cleanup job.
+
+These controls do not prove that provider, gateway-host, or network
+infrastructure retained nothing. Their logs, retention, training controls, and
+deletion capabilities are governed by their operators. There is no document
+store, object store, account system, telemetry integration, URL fetcher, or OCR
+service. Page state remains in memory for the current lifecycle, and PaperWork
+does not claim independently verifiable memory deletion.
 
 The host still serves the application and may receive ordinary web-request
 metadata such as an IP address, user agent, requested path, and time. Browser
@@ -62,7 +70,10 @@ Nothing sent yet
   -> request ID + approval time + contracts + payload are SHA-256 bound
 
 Approved extracted passages
-       hosted: browser -> PaperWork model gateway -> fixed provider endpoint
+       hosted: anonymous HTTP-only session
+               -> one-use request/target/digest grant
+               -> atomic D1 quota/budget/concurrency reservation
+               -> PaperWork model gateway -> fixed provider endpoint
        local:  browser -> exact HTTP loopback Ollama origin
                PaperWork model gateway -X-> not sent
   -> closed ProviderDocumentAnalysisV1
@@ -76,8 +87,8 @@ Provider output    -X-> cannot author UI, execute actions, or bypass validation
 
 Current trust boundaries are the user's device and browser, the served
 application code and dependencies, and the hosting/CDN layer used to deliver
-that code. A hosted run adds the PaperWork gateway and the one explicitly
-selected hosted provider. Direct Ollama instead adds the exact loopback Ollama
+that code. A hosted run adds the PaperWork gateway, metadata-only D1 admission
+store, and the one explicitly selected hosted provider. Direct Ollama instead adds the exact loopback Ollama
 process without adding the gateway to the document-text path.
 The self-host operator controls credentials, logs, retention, and compute.
 PaperWork does not control the user's browser extensions, device,
@@ -138,7 +149,7 @@ not appear as product promises until they are implemented and testable.
 | Citations point to the wrong passage | Preserve page/region/character anchors; verify that cited text supports each claim; allow OCR correction and revalidation. |
 | Data leaks between users or sessions | Isolate sessions and caches; use unpredictable identifiers; authorize every read; add cross-tenant tests before introducing persistence. |
 | Credentials are exposed | Keep provider keys out of source control, client bundles, logs, payload previews, and receipts; use scoped server secrets and clear self-host-operator boundaries. |
-| Public callers drain hosted-model spend | Provider calls require an explicit development environment and a loopback application origin; missing, test, production, unexpected, and public-origin requests fail closed. Add authentication/invite quota, distributed rate limits, replay protection and spend caps before designing a separately reviewed public enablement path. |
+| Public callers drain hosted-model spend | Production enables only an invite mode with an exact HTTPS origin, strong access-pass digest, short-lived anonymous HTTP-only session, one-use target/digest-bound D1 grant, atomic per-session/global request and cost-unit limits, a global concurrency lease, one public provider, server-only key, and operator-confirmed provider hard spend cap. A shared pass is not sufficient for a broadly anonymous launch; add a separately reviewed bot/identity and edge burst boundary first. |
 | A timeout is mistaken for proof that processing stopped | State only that PaperWork stopped waiting; a provider or local Ollama process may continue after receiving the request. Record the attempted hop and do not claim deletion or non-delivery. |
 | A receipt overstates deletion | Record only observed events; use precise states such as `not stored`, `deletion requested`, `provider reported deletion`, or `status unavailable`; do not claim cryptographic or independent verification without it. |
 | Shared/exported results reveal sensitive data | Preview exports, support redaction, warn that receipts contain metadata, and never publish a document analysis by default. |
@@ -171,14 +182,19 @@ action must carry one of these labels. A sentence must not silently combine a
 source fact with an inference or recommendation. Percentage confidence must not
 substitute for evidence.
 
-## Current local receipt and planned extensions
+## Current document-agent receipt and legacy receipt
 
-The current browser-local modal is projected from the trusted pack's observed
-event ledger. It includes processing mode, parser and validator versions,
-completion time, the two run-bound local authorization observations, validation
-counts, zero transfer records, and a conservative
-browser-retention state. Future provider and persistence receipts must also
-include:
+The primary browser modal is projected from a validated
+`DocumentAgentResponseV1`. It records the exact selected provider, returned
+model identity, recipient, gateway/provider routes and states, approved payload
+digest and byte count, consent and completion times, attributed provider-policy
+disclosure, and schema/source-span validation. The browser validates it again
+before rendering.
+
+The retained legacy TrustedActionPack receipt is instead projected from its
+observed event ledger and records the two run-bound local authorizations, zero
+transfers, parser/validator versions, and browser-retention status. Future
+provider and persistence receipts must also include:
 
 - Source identifiers and privacy-preserving fingerprints, not source contents.
 - Processing time, mode, and execution locations.

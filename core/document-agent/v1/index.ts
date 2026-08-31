@@ -6,3 +6,4 @@ export * from './ground';
 export * from './payload';
 export * from './browser-ollama';
 export * from './view-model';
+export * from './gateway';

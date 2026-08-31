@@ -6,6 +6,9 @@ import {
   type ModelCouncilProviderAccessV1,
   type ProviderIdV1,
 } from '@/core/model-council/v1';
+import { getDocumentGatewayConfigurationV1 } from '@/server/document-agent/gateway-config';
+
+export type ProviderSurfaceV1 = 'model_council' | 'document_agent';
 
 export interface ProviderRuntimeV1 {
   readonly id: ProviderIdV1;
@@ -84,15 +87,12 @@ const DEFINITIONS: readonly ProviderDefinitionV1[] = [
   },
 ] as const;
 
-function isEnabled(environment: NodeJS.ProcessEnv) {
-  if (
-    environment.PAPERWORK_MODEL_COUNCIL_ENABLED !== 'true'
-    && environment.PAPERWORK_DOCUMENT_AGENT_ENABLED !== 'true'
-  ) return false;
-  // A public origin is not an authentication or quota boundary. Hosted model
-  // calls remain impossible in production until PaperWork has real per-user
-  // authorization, distributed quotas, replay protection and spend caps.
-  return environment.NODE_ENV === 'development';
+function isEnabled(environment: NodeJS.ProcessEnv, surface: ProviderSurfaceV1) {
+  if (surface === 'model_council') {
+    return environment.NODE_ENV === 'development'
+      && environment.PAPERWORK_MODEL_COUNCIL_ENABLED === 'true';
+  }
+  return getDocumentGatewayConfigurationV1(environment).enabled;
 }
 
 function endpointFor(provider: ProviderIdV1, environment: NodeJS.ProcessEnv) {
@@ -128,8 +128,12 @@ function endpointFor(provider: ProviderIdV1, environment: NodeJS.ProcessEnv) {
 
 export function getProviderRuntimesV1(
   environment: NodeJS.ProcessEnv = process.env,
+  surface: ProviderSurfaceV1 = 'model_council',
 ): readonly ProviderRuntimeV1[] {
-  const globallyEnabled = isEnabled(environment);
+  const globallyEnabled = isEnabled(environment, surface);
+  const publicConfiguration = surface === 'document_agent'
+    ? getDocumentGatewayConfigurationV1(environment)
+    : undefined;
   return DEFINITIONS.map((definition) => {
     const model = environment[definition.modelEnvironmentName]?.trim() || null;
     const apiKey = definition.keyEnvironmentName
@@ -147,7 +151,8 @@ export function getProviderRuntimesV1(
       displayName: definition.displayName,
       model,
       configured,
-      enabled: globallyEnabled && configured,
+      enabled: globallyEnabled && configured
+        && (publicConfiguration?.mode !== 'invite' || definition.id === publicConfiguration.publicProvider),
       access: definition.access,
       recipient,
       privacyUrl: definition.privacyUrl,
@@ -161,8 +166,9 @@ export function getProviderRuntimesV1(
 export function getPublicProviderCatalogV1(
   environment: NodeJS.ProcessEnv = process.env,
   now: () => string = () => new Date().toISOString(),
+  surface: ProviderSurfaceV1 = 'model_council',
 ): ModelCouncilCatalogV1 {
-  const runtimes = getProviderRuntimesV1(environment);
+  const runtimes = getProviderRuntimesV1(environment, surface);
   const providers = runtimes.map((provider) => Object.freeze({
     id: provider.id,
     displayName: provider.displayName,

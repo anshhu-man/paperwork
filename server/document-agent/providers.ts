@@ -159,7 +159,7 @@ export async function runDocumentAgentProviderV1(
     if (!raw) return failed(runtime, startedAt, now(), 'invalid_provider_output', false);
     let envelope: unknown;
     try { envelope = JSON.parse(raw); } catch { return failed(runtime, startedAt, now(), 'invalid_provider_output', false); }
-    const outputText = parseProviderResponseTextV1(runtime.id, envelope);
+    const outputText = parseProviderResponseTextV1(runtime.id, runtime.model!, envelope);
     if (!outputText || new TextEncoder().encode(outputText).byteLength > MAX_PROVIDER_RESPONSE_BYTES) {
       return failed(runtime, startedAt, now(), 'invalid_provider_output', false);
     }

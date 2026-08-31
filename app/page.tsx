@@ -12,10 +12,16 @@ import type { ClaimViewModelV1 } from '@/core/action-pack/v1';
 import {
   DOCUMENT_AGENT_REQUEST_KIND_V1,
   DOCUMENT_AGENT_SCHEMA_VERSION_V1,
+  DOCUMENT_AGENT_GATEWAY_GRANT_HEADER_V1,
+  DOCUMENT_AGENT_GATEWAY_MODE_HEADER_V1,
   browserDirectDocumentAgentOllamaEndpointV1,
   digestDocumentAgentPayloadV1,
+  documentAgentGatewayModeV1,
+  parseDocumentAgentGatewaySessionV1,
   parseDocumentAgentResponseV1,
+  parseDocumentAgentRunGrantResponseV1,
   prepareDocumentAgentPayloadV1,
+  prepareDocumentAgentRunGrantRequestV1,
   runBrowserDirectDocumentAgentOllamaV1,
   toDocumentAgentViewModelV1,
   type DocumentAgentCompletedRunResultV1,
@@ -25,6 +31,7 @@ import {
   type DocumentAgentResponseV1,
   type DocumentAgentSourceSegmentInputV1,
   type DocumentAgentViewModelV1,
+  type DocumentAgentGatewayModeV1,
 } from '@/core/document-agent/v1';
 import {
   MODEL_COUNCIL_PROVIDER_CATALOG_VERSION_V1,
@@ -88,6 +95,11 @@ interface DocumentPreview {
 
 type AgentProgress = LocalPdfProgressV1 | { readonly stage: 'preparing_model' | 'analyzing' | 'validating' };
 type AppFailureCode = LocalPdfFailureCodeV1 | DocumentAgentFailureCodeV1 | 'catalog_unavailable' | 'agent_response_invalid';
+type GatewaySessionState = 'not_applicable' | 'checking' | 'required' | 'authenticated';
+
+class ModelGatewayUiError extends Error {
+  constructor(readonly status: number, message: string) { super(message); }
+}
 
 type WorkflowState =
   | { readonly tag: 'home' }
@@ -160,6 +172,21 @@ const PROGRESS_STEPS = [
 
 function isConfiguredEngine(provider: ModelCouncilProviderCatalogEntryV1): provider is ConfiguredEngine {
   return provider.availability === 'configured' && typeof provider.model === 'string' && provider.model.length > 0;
+}
+
+function loopbackBrowserOrigin() {
+  return globalThis.location.protocol === 'http:'
+    && ['localhost', '127.0.0.1', '[::1]'].includes(globalThis.location.hostname);
+}
+
+function gatewayMessage(status: number, stage: 'session' | 'grant' | 'analysis') {
+  if (status === 401) return 'Your private-beta access is missing or expired. Enter the access pass and approve this payload again.';
+  if (status === 429) return 'This session or deployment has reached its current safety budget. Try again later; no new model call was started.';
+  if (status === 409) return stage === 'grant'
+    ? 'This approval is stale or already used. Review the payload and approve it again.'
+    : 'The selected model, consent, or one-use grant changed. Review the payload again.';
+  if (status === 503) return 'The hosted admission service is unavailable, so PaperWork did not start a provider call.';
+  return 'The hosted gateway safely rejected this run before PaperWork could show a validated result.';
 }
 
 function fileMeta(file: File) {
@@ -242,6 +269,10 @@ export default function Home() {
   const [catalog, setCatalog] = useState<ModelCouncilCatalogV1>();
   const [catalogError, setCatalogError] = useState(false);
   const [selectedProvider, setSelectedProvider] = useState<ProviderIdV1>();
+  const [gatewayMode, setGatewayMode] = useState<DocumentAgentGatewayModeV1>('disabled');
+  const [gatewaySession, setGatewaySession] = useState<GatewaySessionState>('not_applicable');
+  const [gatewayAccessPass, setGatewayAccessPass] = useState('');
+  const [modelSendError, setModelSendError] = useState<string>();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const abortRef = useRef<AbortController | undefined>(undefined);
   const activeRunRef = useRef<string | undefined>(undefined);
@@ -250,21 +281,39 @@ export default function Home() {
   useEffect(() => () => abortRef.current?.abort(), []);
   useEffect(() => {
     const controller = new AbortController();
-    fetch('/api/document-agent/catalog', { cache: 'no-store', signal: controller.signal })
-      .then(async (response) => {
+    void (async () => {
+      const response = await fetch('/api/document-agent/catalog', { cache: 'no-store', signal: controller.signal });
         if (!response.ok) throw new Error('catalog unavailable');
-        return response.json() as Promise<unknown>;
-      })
-      .then((value) => {
-        const parsed = parseModelCouncilCatalogV1(value);
+        const mode = documentAgentGatewayModeV1(response.headers.get(DOCUMENT_AGENT_GATEWAY_MODE_HEADER_V1));
+        const parsed = parseModelCouncilCatalogV1(await response.json() as unknown);
         if (!parsed.ok) throw new Error('invalid catalog');
-        setCatalog(parsed.value);
         const configured = parsed.value.providers.filter(isConfiguredEngine);
-        const preferred = configured.find((provider) => provider.id === 'ollama') ?? configured[0];
+        if (mode === 'disabled' && configured.length > 0) throw new Error('missing gateway mode');
+        if (mode === 'invite' && (configured.length !== 1 || configured[0]?.id === 'ollama')) throw new Error('invalid hosted catalog');
+        setGatewayMode(mode);
+        setCatalog(parsed.value);
+        const preferred = loopbackBrowserOrigin()
+          ? configured.find((provider) => provider.id === 'ollama') ?? configured[0]
+          : configured.find((provider) => provider.id !== 'ollama') ?? configured[0];
         setSelectedProvider(preferred?.id);
-      })
-      .catch((error: unknown) => {
-        if (!(error instanceof DOMException && error.name === 'AbortError')) setCatalogError(true);
+        if (mode === 'invite') {
+          setGatewaySession('checking');
+          const sessionResponse = await fetch('/api/document-agent/session', { cache: 'no-store', credentials: 'same-origin', signal: controller.signal });
+          const session = parseDocumentAgentGatewaySessionV1(await sessionResponse.json() as unknown);
+          if (sessionResponse.ok && session?.authenticated === true) setGatewaySession('authenticated');
+          else if (sessionResponse.status === 401 && session?.authenticated === false) setGatewaySession('required');
+          else throw new Error('hosted admission unavailable');
+        } else {
+          setGatewaySession('not_applicable');
+        }
+      })().catch((error: unknown) => {
+        if (!(error instanceof DOMException && error.name === 'AbortError')) {
+          setCatalogError(true);
+          setCatalog(undefined);
+          setSelectedProvider(undefined);
+          setGatewayMode('disabled');
+          setGatewaySession('not_applicable');
+        }
       });
     return () => controller.abort();
   }, []);
@@ -316,6 +365,7 @@ export default function Home() {
 
   function selectEngine(provider: ProviderIdV1) {
     setSelectedProvider(provider);
+    setModelSendError(undefined);
     setWorkflow((current) => current.tag === 'review'
       ? { ...current, approvals: { readApprovedAt: current.approvals.readApprovedAt } }
       : current);
@@ -329,6 +379,8 @@ export default function Home() {
     setActiveClaimId(undefined);
     setResultTab('overview');
     setIntakeError(undefined);
+    setModelSendError(undefined);
+    setGatewayAccessPass('');
     if (fileInputRef.current) fileInputRef.current.value = '';
     setWorkflow({ tag: 'home' });
   }
@@ -425,16 +477,18 @@ export default function Home() {
 
   async function updateModelApproval(checked: boolean) {
     if (workflow.tag !== 'preview') return;
+    setModelSendError(undefined);
     if (!checked) {
       setWorkflow((current) => current.tag === 'preview' ? { ...current, approval: undefined } : current);
       return;
     }
     const preview = workflow;
+    const requestId = `request.${crypto.randomUUID()}`;
     const recordedAt = new Date().toISOString();
     try {
       const providerTarget = { provider: preview.engine.id, model: preview.engine.model, recipient: preview.engine.recipient };
       const payload = prepareDocumentAgentPayloadV1({
-        requestId: preview.requestId,
+        requestId,
         consentRecordedAt: recordedAt,
         sourceRevisionId: preview.extraction.sourceRevisionId,
         sourceFingerprint: preview.extraction.fingerprint,
@@ -445,7 +499,7 @@ export default function Home() {
       const request: DocumentAgentRequestV1 = {
         kind: DOCUMENT_AGENT_REQUEST_KIND_V1,
         schemaVersion: DOCUMENT_AGENT_SCHEMA_VERSION_V1,
-        requestId: preview.requestId,
+        requestId,
         payload,
         consent: {
           approvedBy: 'user',
@@ -456,7 +510,7 @@ export default function Home() {
         },
       };
       setWorkflow((current) => current.tag === 'preview' && current.requestId === preview.requestId
-        ? { ...current, approval: { recordedAt, digest, request } }
+        ? { ...current, requestId, approval: { recordedAt, digest, request } }
         : current);
     } catch {
       setWorkflow({ tag: 'failure', source: preview.source, code: 'agent_response_invalid' });
@@ -472,15 +526,20 @@ export default function Home() {
       readApprovedAt: lockedPreview.readApprovedAt,
       planApprovedAt: lockedPreview.approval.recordedAt,
     };
-    const controller = new AbortController();
-    abortRef.current = controller;
-    activeRunRef.current = runId;
     const stagedSource = lockedPreview.source;
     const extraction = lockedPreview.extraction;
     const engine = lockedPreview.engine;
     const agentRequest = lockedPreview.approval.request;
     const payload = agentRequest.payload;
     const providerTarget = payload.providerTarget;
+    const hostedInvite = gatewayMode === 'invite' && engine.id !== 'ollama';
+    if (hostedInvite && gatewaySession !== 'authenticated' && gatewayAccessPass.length === 0) {
+      setModelSendError('Enter the private-beta access pass. It is exchanged for a short-lived HTTP-only session and is never added to the document payload.');
+      return;
+    }
+    const controller = new AbortController();
+    abortRef.current = controller;
+    activeRunRef.current = runId;
     setWorkflow({ tag: 'processing', phase: 'model', source: stagedSource, authorization, progress: { stage: 'preparing_model' }, preview: lockedPreview });
     const updateProgress = (progress: Extract<AgentProgress, { readonly stage: 'preparing_model' | 'analyzing' | 'validating' }>) => {
       if (activeRunRef.current !== runId) return;
@@ -496,18 +555,53 @@ export default function Home() {
         if (!directEndpoint) throw new TypeError('Invalid local model target.');
         response = await runBrowserDirectDocumentAgentOllamaV1(agentRequest, { signal: controller.signal });
       } else {
+        let runGrantToken: string | undefined;
+        if (hostedInvite) {
+          const sessionResponse = await fetch('/api/document-agent/session', {
+            method: 'POST',
+            cache: 'no-store',
+            credentials: 'same-origin',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ accessPass: gatewayAccessPass }),
+            signal: controller.signal,
+          });
+          if (!sessionResponse.ok) throw new ModelGatewayUiError(sessionResponse.status, gatewayMessage(sessionResponse.status, 'session'));
+          const session = parseDocumentAgentGatewaySessionV1(await sessionResponse.json() as unknown);
+          if (!session?.authenticated) throw new ModelGatewayUiError(502, 'PaperWork rejected an invalid private-session response. No document text was sent to a provider.');
+          setGatewaySession('authenticated');
+          setGatewayAccessPass('');
+          const grantResponse = await fetch('/api/document-agent/grants', {
+            method: 'POST',
+            cache: 'no-store',
+            credentials: 'same-origin',
+            headers: {
+              'content-type': 'application/json',
+              'x-paperwork-catalog-version': MODEL_COUNCIL_PROVIDER_CATALOG_VERSION_V1,
+            },
+            body: JSON.stringify(prepareDocumentAgentRunGrantRequestV1(agentRequest)),
+            signal: controller.signal,
+          });
+          const grantValue = await grantResponse.json() as unknown;
+          if (!grantResponse.ok) throw new ModelGatewayUiError(grantResponse.status, gatewayMessage(grantResponse.status, 'grant'));
+          const parsedGrant = parseDocumentAgentRunGrantResponseV1(grantValue);
+          if (!parsedGrant) throw new ModelGatewayUiError(502, 'PaperWork rejected an invalid one-use run grant. No document text was sent to a provider.');
+          runGrantToken = parsedGrant.grantToken;
+        }
+        const gatewayHeaders: Record<string, string> = {
+          'content-type': 'application/json',
+          'x-paperwork-catalog-version': MODEL_COUNCIL_PROVIDER_CATALOG_VERSION_V1,
+        };
+        if (runGrantToken) gatewayHeaders[DOCUMENT_AGENT_GATEWAY_GRANT_HEADER_V1] = runGrantToken;
         const gatewayResponse = await fetch('/api/document-agent/analyze', {
           method: 'POST',
           cache: 'no-store',
-          headers: {
-            'content-type': 'application/json',
-            'x-paperwork-catalog-version': MODEL_COUNCIL_PROVIDER_CATALOG_VERSION_V1,
-          },
+          credentials: 'same-origin',
+          headers: gatewayHeaders,
           body: JSON.stringify(agentRequest),
           signal: controller.signal,
         });
         const value = await gatewayResponse.json() as unknown;
-        if (!gatewayResponse.ok) throw new TypeError('Document gateway rejected the run.');
+        if (!gatewayResponse.ok) throw new ModelGatewayUiError(gatewayResponse.status, gatewayMessage(gatewayResponse.status, 'analysis'));
         const parsed = parseDocumentAgentResponseV1(value, payload.segments, {
           requestId: agentRequest.requestId,
           previewDigest: agentRequest.consent.previewDigest,
@@ -533,12 +627,30 @@ export default function Home() {
     } catch (error) {
       if (controller.signal.aborted || (error instanceof DOMException && error.name === 'AbortError')) {
         setWorkflow({ ...lockedPreview, tag: 'preview', approval: undefined });
+      } else if (error instanceof ModelGatewayUiError) {
+        if (error.status === 401) setGatewaySession('required');
+        setModelSendError(error.message);
+        setWorkflow({ ...lockedPreview, tag: 'preview', approval: undefined });
       } else {
         setWorkflow({ tag: 'failure', source: stagedSource, code: 'agent_response_invalid' });
       }
     } finally {
       if (activeRunRef.current === runId) activeRunRef.current = undefined;
       if (abortRef.current === controller) abortRef.current = undefined;
+    }
+  }
+
+  async function forgetGatewaySession() {
+    try {
+      const response = await fetch('/api/document-agent/session', { method: 'DELETE', cache: 'no-store', credentials: 'same-origin' });
+      if (!response.ok) throw new Error('session revocation failed');
+      const session = parseDocumentAgentGatewaySessionV1(await response.json() as unknown);
+      if (!session || session.authenticated) throw new Error('invalid session revocation response');
+      setGatewaySession('required');
+      setGatewayAccessPass('');
+      setModelSendError(undefined);
+    } catch {
+      setModelSendError('PaperWork could not confirm that this private session was revoked. It remains active in this browser; try again before closing the tab.');
     }
   }
 
@@ -586,7 +698,7 @@ export default function Home() {
               <div className="model-council-note" aria-label="Supported document model adapters">
                 <strong>One document-agent layer</strong>
                 <span>OpenAI · Claude · Mistral · DeepSeek · Ollama</span>
-                <small>Local Ollama is preferred. Hosted adapters require your own configuration and explicit consent; provider terms and charges vary.</small>
+                <small>{gatewayMode === 'invite' ? 'Hosted private beta: an access pass is required only when you send reviewed text. One operator-approved provider receives it; provider terms and charges vary.' : 'Local Ollama is available from the localhost build. Hosted adapters use one explicitly selected provider and separate consent; provider terms and charges vary.'}</small>
               </div>
             </div>
             <div className="workspace-preview" aria-label="Add a PDF to PaperWork">
@@ -654,7 +766,7 @@ export default function Home() {
                   </select>
                   {selectedEngine && <small>{selectedEngine.disclosure}</small>}
                 </label>
-                <dl><div><dt>PDF processing</dt><dd>This browser tab</dd></div><div><dt>Selected model</dt><dd>{selectedEngine ? `${selectedEngine.displayName} · ${selectedEngine.model}` : 'Unavailable'}</dd></div><div><dt>At this step</dt><dd>Local extraction only</dd></div><div><dt>External knowledge</dt><dd>Off</dd></div></dl>
+                <dl><div><dt>PDF processing</dt><dd>This browser tab</dd></div><div><dt>Selected model</dt><dd>{selectedEngine ? `${selectedEngine.displayName} · ${selectedEngine.model}` : 'Unavailable'}</dd></div><div><dt>At this step</dt><dd>Local extraction only</dd></div><div><dt>Online admission</dt><dd>{gatewayMode === 'invite' && selectedEngine?.id !== 'ollama' ? 'Anonymous session + one-use grant' : 'Not used'}</dd></div><div><dt>External knowledge</dt><dd>Off</dd></div></dl>
                 <button className="preview-flow-link" onClick={() => setShowFlow(true)}>Preview the exact data flow →</button>
                 <fieldset className="local-consent">
                   <legend>Local-read permission</legend>
@@ -675,7 +787,7 @@ export default function Home() {
           <header className="app-header"><Brand onHome={resetSession} /><TrustBadge /><button className="quiet-button" onClick={resetSession}>Cancel</button></header>
           <section className="payload-review-shell">
             <button className="back-button" onClick={() => setWorkflow({ tag: 'review', source: workflow.source, approvals: { readApprovedAt: workflow.readApprovedAt } })}>← Change file or model</button>
-            <div className="review-heading"><p className="eyebrow">Exact model payload checkpoint</p><h1>See the text before it is sent.</h1><p>The PDF has been read locally. The block below is the exact source-data object the selected model will receive—no PDF bytes, browser identifiers, account data, tools or hidden attachments.</p></div>
+            <div className="review-heading"><p className="eyebrow">Exact model payload checkpoint</p><h1>See the text before it is sent.</h1><p>The PDF has been read locally. The block below is the exact source-data object the selected model will receive—no PDF bytes, account data, tools or hidden attachments. The hosted gateway separately keeps short-lived admission metadata.</p></div>
             <div className="payload-review-grid">
               <section className="payload-review-card">
                 <div className="section-label-row"><span>1</span><h2>Approved local extraction</h2></div>
@@ -688,13 +800,22 @@ export default function Home() {
               <aside className="payload-approval-card">
                 <p className="trust-kicker">Fresh transfer approval</p><h2>Lock this exact request.</h2>
                 <dl><div><dt>PDF bytes</dt><dd>Never sent</dd></div><div><dt>Source passages</dt><dd>{workflow.segments.length}</dd></div><div><dt>Tools / browsing</dt><dd>Disabled</dd></div><div><dt>Fallback model</dt><dd>None</dd></div></dl>
+                {gatewayMode === 'invite' && workflow.engine.id !== 'ollama' && (
+                  <section className="gateway-access-card" aria-label="Private beta access">
+                    <div className="gateway-access-heading"><span>Hosted access</span><strong>{gatewaySession === 'authenticated' ? 'Private session active' : gatewaySession === 'checking' ? 'Checking this browser…' : 'Access pass required'}</strong></div>
+                    {gatewaySession === 'authenticated'
+                      ? <><p>A short-lived, HTTP-only cookie identifies this anonymous quota session. It contains no document text.</p><button type="button" onClick={() => void forgetGatewaySession()}>Forget private access</button></>
+                      : <label className="agent-engine-field"><span>Private-beta access pass</span><input type="password" value={gatewayAccessPass} autoComplete="off" spellCheck={false} disabled={gatewaySession === 'checking'} onChange={(event) => { setGatewayAccessPass(event.target.value); setModelSendError(undefined); }} /><small>The pass is sent only to PaperWork’s session endpoint, then cleared from this page after exchange. It is never added to the model payload.</small></label>}
+                  </section>
+                )}
                 <fieldset className="local-consent">
                   <legend>Model-send permission</legend>
                   <label><input type="checkbox" checked={Boolean(workflow.approval)} onChange={(event) => void updateModelApproval(event.target.checked)} /><span>I reviewed these passages and allow PaperWork to send this exact source object to {workflow.engine.recipient} for analysis by {workflow.engine.model}.</span></label>
                 </fieldset>
                 {workflow.approval && <div className="payload-digest"><small>Locked request digest</small><strong>SHA-256 {workflow.approval.digest.value}</strong><span>{workflow.approval.digest.byteCount.toLocaleString()} canonical request bytes · approved {formatTime(workflow.approval.recordedAt)}</span></div>}
-                <div className="assurance-note"><strong>Approval is single-target and short-lived</strong><p>Changing a passage, source revision, request ID, approval time, provider, model or recipient breaks this digest. PaperWork never switches targets silently.</p></div>
-                <button className="primary-button large" disabled={!workflow.approval} onClick={startModelAnalysis}>Send to {workflow.engine.displayName} <span>→</span></button>
+                {modelSendError && <div className="inline-error" role="alert">{modelSendError}</div>}
+                <div className="assurance-note"><strong>Approval and online grant are single-target</strong><p>Changing a passage, source revision, request ID, approval time, provider, model or recipient breaks the digest. Hosted runs also consume one short-lived grant atomically; PaperWork never switches targets silently.</p></div>
+                <button className="primary-button large" disabled={!workflow.approval || gatewayMode === 'invite' && workflow.engine.id !== 'ollama' && (gatewaySession === 'checking' || gatewaySession !== 'authenticated' && gatewayAccessPass.length === 0)} onClick={startModelAnalysis}>Send to {workflow.engine.displayName} <span>→</span></button>
               </aside>
             </div>
           </section>
@@ -760,8 +881,8 @@ export default function Home() {
           <section ref={flowDialogRef} className="modal-panel" role="dialog" aria-modal="true" aria-labelledby="flow-title" tabIndex={-1} onMouseDown={(event) => event.stopPropagation()}>
             <button className="modal-close" onClick={() => setShowFlow(false)} aria-label="Close">×</button><p className="eyebrow">{result ? 'Observed run receipt' : 'Data-flow preview'}</p><h2 id="flow-title">{result ? 'What happened in this run?' : 'See the exact path before anything is read.'}</h2>
             <p className="modal-lede">{result ? `The PDF stayed in this tab. Its extracted text was sent only to ${result.view.agent.recipient} using the recorded route, then PaperWork validated the returned schema and exact citations.` : workflow.tag === 'preview' ? `The PDF was extracted locally and the exact passages are visible behind this dialog. Nothing reaches ${workflow.engine.recipient} until you lock and send that payload.` : workflow.tag === 'processing' && workflow.phase === 'model' ? `The PDF stayed local. The digest-locked passages are now following the approved route to ${workflow.preview.engine.recipient}.` : source ? `Only the selected PDF name and size are visible. Local extraction runs first, then PaperWork stops so you can inspect every passage before model approval.` : 'No source is selected. PaperWork has no account requirement, document upload endpoint or hidden model fallback.'}</p>
-            <div className="flow-diagram agent-flow-diagram"><div><span>1</span><strong>{source ? 'Selected PDF' : 'Your PDF'}</strong><small>{source ? source.name : 'Not selected yet'}</small></div><i>→</i><div><span>2</span><strong>Local PDF parser</strong><small>{result || workflow.tag === 'preview' || workflow.tag === 'processing' && workflow.phase === 'model' ? 'Completed in this tab' : source ? 'Runs after local-read approval' : 'Waiting locally'}</small></div><i>→</i><div><span>3</span><strong>{result ? `${result.view.agent.provider} model` : activeEngine ? `${activeEngine.displayName} model` : 'Selected model'}</strong><small>{result ? result.view.agent.recipient : activeEngine?.recipient ?? 'No model configured'}</small></div><i>→</i><div><span>4</span><strong>Schema + citation validator</strong><small>Only closed, citation-matched data reaches code-owned UI</small></div></div>
-            <dl className="receipt-list"><div><dt>PDF file transfer</dt><dd>None — bytes remain in this tab</dd></div><div><dt>PDF contents read</dt><dd>{result || workflow.tag === 'preview' || workflow.tag === 'processing' && workflow.phase === 'model' ? 'Yes, in this tab' : workflow.tag === 'processing' ? 'Locally in progress' : 'Not yet'}</dd></div><div><dt>Model recipient</dt><dd>{result?.view.agent.recipient ?? activeEngine?.recipient ?? 'Not selected'}</dd></div><div><dt>Model route</dt><dd>{result ? result.view.agent.channel : activeEngine?.id === 'ollama' ? 'Browser to local provider' : activeEngine ? 'PaperWork gateway to provider' : 'Not selected'}</dd></div><div><dt>External knowledge/tools</dt><dd>Disabled</dd></div>{workflow.tag === 'preview' && workflow.approval && <><div><dt>Locked digest</dt><dd>SHA-256 {workflow.approval.digest.value.slice(0, 16)}…</dd></div><div><dt>Transfer status</dt><dd>Not sent</dd></div></>}{result && <><div><dt>Transfer status</dt><dd>{result.response.receipt.transfer.status}</dd></div><div><dt>Payload digest</dt><dd>SHA-256 {result.view.agent.payloadDigest.slice(0, 16)}…</dd></div><div><dt>Payload size</dt><dd>{result.view.agent.payloadByteCount.toLocaleString()} bytes</dd></div><div><dt>Consent recorded</dt><dd>{formatTime(result.response.receipt.consent.recordedAt)}</dd></div><div><dt>Parser</dt><dd>{result.view.receipt.parser}</dd></div><div><dt>Validator</dt><dd>{result.view.receipt.validator}</dd></div><div><dt>Completed</dt><dd>{formatTime(result.view.receipt.completedAt)}</dd></div></>}</dl>
+            <div className="flow-diagram agent-flow-diagram"><div><span>1</span><strong>{source ? 'Selected PDF' : 'Your PDF'}</strong><small>{source ? source.name : 'Not selected yet'}</small></div><i>→</i><div><span>2</span><strong>Local PDF parser</strong><small>{result || workflow.tag === 'preview' || workflow.tag === 'processing' && workflow.phase === 'model' ? 'Completed in this tab' : source ? 'Runs after local-read approval' : 'Waiting locally'}</small></div><i>→</i><div><span>3</span><strong>{activeEngine?.id === 'ollama' ? 'Direct local model' : 'Consent-bound gateway'}</strong><small>{result ? result.view.agent.recipient : activeEngine ? `${activeEngine.displayName} · ${activeEngine.recipient}` : 'No model configured'}</small></div><i>→</i><div><span>4</span><strong>Schema + citation validator</strong><small>Only closed, citation-matched data reaches code-owned UI</small></div></div>
+            <dl className="receipt-list"><div><dt>PDF file transfer</dt><dd>None — bytes remain in this tab</dd></div><div><dt>PDF contents read</dt><dd>{result || workflow.tag === 'preview' || workflow.tag === 'processing' && workflow.phase === 'model' ? 'Yes, in this tab' : workflow.tag === 'processing' ? 'Locally in progress' : 'Not yet'}</dd></div><div><dt>Model recipient</dt><dd>{result?.view.agent.recipient ?? activeEngine?.recipient ?? 'Not selected'}</dd></div><div><dt>Model route</dt><dd>{result ? result.view.agent.channel : activeEngine?.id === 'ollama' ? 'Browser to local provider' : activeEngine ? 'PaperWork gateway to provider' : 'Not selected'}</dd></div>{gatewayMode === 'invite' && activeEngine?.id !== 'ollama' && <div><dt>Gateway metadata</dt><dd>Credential hashes, random request and target, payload digest and byte count, consent/status timestamps, quota units and lease state — never PDF bytes or document text</dd></div>}<div><dt>External knowledge/tools</dt><dd>Disabled</dd></div>{workflow.tag === 'preview' && workflow.approval && <><div><dt>Locked digest</dt><dd>SHA-256 {workflow.approval.digest.value.slice(0, 16)}…</dd></div><div><dt>Transfer status</dt><dd>Not sent</dd></div></>}{result && <><div><dt>Transfer status</dt><dd>{result.response.receipt.transfer.status}</dd></div><div><dt>Payload digest</dt><dd>SHA-256 {result.view.agent.payloadDigest.slice(0, 16)}…</dd></div><div><dt>Payload size</dt><dd>{result.view.agent.payloadByteCount.toLocaleString()} bytes</dd></div><div><dt>Consent recorded</dt><dd>{formatTime(result.response.receipt.consent.recordedAt)}</dd></div><div><dt>Parser</dt><dd>{result.view.receipt.parser}</dd></div><div><dt>Validator</dt><dd>{result.view.receipt.validator}</dd></div><div><dt>Completed</dt><dd>{formatTime(result.view.receipt.completedAt)}</dd></div></>}</dl>
             <p className="future-note"><strong>Open-source boundary:</strong> The model cannot author HTML, components or executable actions. It returns a closed JSON contract; PaperWork reconstructs an allowlisted view model and keeps every interpretation marked for human review.</p><button className="primary-button full" onClick={() => setShowFlow(false)}>Understood</button>
           </section>
         </div>

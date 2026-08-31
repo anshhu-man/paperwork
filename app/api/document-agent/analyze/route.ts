@@ -3,6 +3,7 @@ import {
   DOCUMENT_AGENT_RESPONSE_KIND_V1,
   DOCUMENT_AGENT_SCHEMA_VERSION_V1,
   parseDocumentAgentResponseV1,
+  prepareDocumentAgentRunGrantRequestV1,
   verifyDocumentAgentRequestV1,
   type DocumentAgentProviderPolicyV1,
   type DocumentAgentResponseV1,
@@ -11,6 +12,17 @@ import { MODEL_COUNCIL_PROVIDER_CATALOG_VERSION_V1 } from '@/core/model-council/
 import { readUtf8BodyWithinLimitV1 } from '@/server/model-council/bounded-body';
 import { getProviderRuntimesV1, type ProviderRuntimeV1 } from '@/server/model-council/registry';
 import { runDocumentAgentProviderV1 } from '@/server/document-agent/providers';
+import {
+  authenticateGatewaySessionV1,
+  completeGatewayGrantV1,
+  consumeGatewayGrantV1,
+  loadGatewayDatabaseV1,
+  type GatewaySessionV1,
+} from '@/server/document-agent/gateway-admission';
+import {
+  checkDocumentGatewayBoundaryV1,
+  type InviteDocumentGatewayConfigurationV1,
+} from '@/server/document-agent/gateway-config';
 
 const MAX_BODY_BYTES = 512 * 1024;
 const CONSENT_MAX_AGE_MS = 15 * 60 * 1000;
@@ -28,16 +40,6 @@ const HEADERS = {
 
 function issue(status: number, message: string, delivery: 'not_sent' | 'unknown' = 'not_sent') {
   return new Response(JSON.stringify({ issue: message, delivery }), { status, headers: HEADERS });
-}
-
-function sameOrigin(request: Request) {
-  const origin = request.headers.get('origin');
-  if (!origin) return false;
-  try { return new URL(origin).origin === new URL(request.url).origin; } catch { return false; }
-}
-
-function loopback(request: Request) {
-  try { return ['localhost', '127.0.0.1', '[::1]'].includes(new URL(request.url).hostname); } catch { return false; }
 }
 
 function reserve(requestId: string, now: number) {
@@ -58,8 +60,20 @@ function policy(runtime: ProviderRuntimeV1): DocumentAgentProviderPolicyV1 {
 
 export async function POST(request: Request) {
   const gatewayStartedAt = new Date().toISOString();
-  if (!loopback(request)) return issue(403, 'Document analysis is available only from a loopback development origin. No provider was contacted.');
-  if (!sameOrigin(request)) return issue(403, 'A same-origin request is required. No provider was contacted.');
+  const boundary = checkDocumentGatewayBoundaryV1(request);
+  if (!boundary.ok) return issue(boundary.status, boundary.issue);
+  let database: D1Database | undefined;
+  let session: GatewaySessionV1 | undefined;
+  let publicConfiguration: InviteDocumentGatewayConfigurationV1 | undefined;
+  if (boundary.configuration.mode === 'invite') {
+    publicConfiguration = boundary.configuration;
+    database = await loadGatewayDatabaseV1();
+    if (!database) return issue(503, 'The private-beta admission store is unavailable. No provider was contacted.');
+    try { session = await authenticateGatewaySessionV1(request, database); } catch {
+      return issue(503, 'The private-beta admission store is unavailable. No provider was contacted.');
+    }
+    if (!session) return issue(401, 'A valid private-beta session is required. No provider was contacted.');
+  }
   if (!/^application\/json(?:\s*;.*)?$/i.test(request.headers.get('content-type') ?? '')) return issue(415, 'Content-Type must be application/json. No provider was contacted.');
   if (request.headers.get('x-paperwork-catalog-version') !== MODEL_COUNCIL_PROVIDER_CATALOG_VERSION_V1) return issue(409, 'The provider catalog changed. Preview the analysis again.');
 
@@ -76,22 +90,65 @@ export async function POST(request: Request) {
   const now = Date.now();
   const consentAge = now - Date.parse(verified.value.consent.recordedAt);
   if (!Number.isFinite(consentAge) || consentAge < -CLOCK_SKEW_MS || consentAge > CONSENT_MAX_AGE_MS) return issue(409, 'Consent expired. Preview the analysis again.');
-  const runtime = getProviderRuntimesV1().find((candidate) => candidate.id === target.provider);
+  const runtime = getProviderRuntimesV1(process.env, 'document_agent').find((candidate) => candidate.id === target.provider);
   if (!runtime || !runtime.enabled || runtime.model !== target.model || runtime.recipient !== target.recipient) return issue(409, 'The selected model or recipient is unavailable or changed. Preview again.');
-  if (!reserve(verified.value.requestId, now)) return issue(409, 'This document-agent request was already used. Generate a fresh preview.');
-  if (activeRequests >= MAX_ACTIVE_REQUESTS) return issue(429, 'The document gateway is busy. Generate a fresh preview before retrying.');
+  let grantHash: string | undefined;
+  if (publicConfiguration && database && session) {
+    let consumed;
+    try {
+      consumed = await consumeGatewayGrantV1(
+        request,
+        database,
+        publicConfiguration,
+        session,
+        prepareDocumentAgentRunGrantRequestV1(verified.value),
+        now,
+      );
+    } catch {
+      return issue(503, 'The private-beta admission store is unavailable. No provider was contacted.');
+    }
+    if (!consumed.ok) {
+      return consumed.reason === 'capacity_exhausted'
+        ? issue(429, 'This session or deployment has reached its current model budget. No provider was contacted.')
+        : issue(409, 'The one-use run grant is invalid, expired, changed, or already used. No provider was contacted.');
+    }
+    grantHash = consumed.grantHash;
+  } else {
+    if (activeRequests >= MAX_ACTIVE_REQUESTS) return issue(429, 'The document gateway is busy. Generate a fresh preview before retrying.');
+    if (!reserve(verified.value.requestId, now)) return issue(409, 'This document-agent request was already used. Generate a fresh preview.');
+  }
 
-  activeRequests += 1;
+  const tracksLocalConcurrency = boundary.configuration.mode === 'local_development';
+  if (tracksLocalConcurrency) activeRequests += 1;
   let result;
   try {
     result = await runDocumentAgentProviderV1(runtime, verified.value.payload, { signal: request.signal });
+  } catch {
+    if (grantHash && database) {
+      try { await completeGatewayGrantV1(database, grantHash, 'delivery_unknown'); } catch { /* lease expiry remains the fail-safe */ }
+    }
+    return issue(502, 'The document provider run ended unexpectedly. Delivery status is unknown.', 'unknown');
   } finally {
-    activeRequests -= 1;
+    if (tracksLocalConcurrency) activeRequests -= 1;
+  }
+  if (grantHash && database) {
+    const status = result.status === 'completed'
+      ? 'completed'
+      : result.status === 'failed' && (result.issueCode === 'network_failure' || result.issueCode === 'provider_timeout')
+        ? 'delivery_unknown'
+        : 'failed';
+    try { await completeGatewayGrantV1(database, grantHash, status); } catch { /* admission lease expires automatically */ }
   }
   const gatewayCompletedAt = new Date().toISOString();
   const digest = verified.value.consent.previewDigest;
   const bytes = verified.value.consent.previewByteCount;
-  const transferStatus = result.status === 'completed' ? 'completed' : result.status === 'failed' ? 'failed' : 'not_sent';
+  const transferStatus = result.status === 'completed'
+    ? 'completed'
+    : result.status === 'failed'
+      ? result.issueCode === 'network_failure' || result.issueCode === 'provider_timeout'
+        ? 'delivery_unknown'
+        : 'failed'
+      : 'not_sent';
   const startedAt = result.status === 'unavailable' ? null : result.startedAt;
   const completedAt = result.status === 'unavailable' ? null : result.completedAt;
   const response: DocumentAgentResponseV1 = {

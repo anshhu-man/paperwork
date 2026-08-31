@@ -119,12 +119,13 @@ test('all four hosted adapters use fixed POST requests, no redirects, no tools, 
 
 function envelope(provider: ProviderIdV1, output: ProviderAnalysisV1) {
   const content = JSON.stringify(output);
+  const model = runtime(provider).model;
   if (provider === 'openai' || provider === 'deepseek') {
-    return { status: 'completed', output: [{ type: 'message', content: [{ type: 'output_text', text: content }] }] };
+    return { model, status: 'completed', output: [{ type: 'message', content: [{ type: 'output_text', text: content }] }] };
   }
-  if (provider === 'anthropic') return { stop_reason: 'end_turn', content: [{ type: 'text', text: content }] };
-  if (provider === 'mistral') return { choices: [{ finish_reason: 'stop', message: { content } }] };
-  return { done: true, done_reason: 'stop', message: { content } };
+  if (provider === 'anthropic') return { model, stop_reason: 'end_turn', content: [{ type: 'text', text: content }] };
+  if (provider === 'mistral') return { model, choices: [{ finish_reason: 'stop', message: { content } }] };
+  return { model, done: true, done_reason: 'stop', message: { content } };
 }
 
 test('all four hosted adapters produce the same checked PaperWork output contract', async () => {
@@ -157,7 +158,23 @@ test('adapter rejects schema-shaped output whose quote is absent from the sent p
   if (result.status === 'failed') assert.equal(result.issueCode, 'invalid_provider_output');
 });
 
-test('registry never exposes secrets and cannot enable provider calls in production', () => {
+test('all hosted adapters reject a mismatched or missing response model identity', async () => {
+  for (const provider of ['openai', 'anthropic', 'mistral', 'deepseek'] as const) {
+    const validEnvelope = envelope(provider, analysis());
+    for (const responseEnvelope of [
+      { ...validEnvelope, model: 'different-model' },
+      Object.fromEntries(Object.entries(validEnvelope).filter(([name]) => name !== 'model')),
+    ]) {
+      const result = await runProviderV1(runtime(provider), payload([provider]), {
+        fetchImpl: async () => new Response(JSON.stringify(responseEnvelope)),
+      });
+      assert.equal(result.status, 'failed', provider);
+      if (result.status === 'failed') assert.equal(result.issueCode, 'invalid_provider_output', provider);
+    }
+  }
+});
+
+test('registry never exposes secrets and enables production documents only behind the complete public gateway', () => {
   const base: NodeJS.ProcessEnv = {
     NODE_ENV: 'development',
     PAPERWORK_MODEL_COUNCIL_ENABLED: 'true',
@@ -223,6 +240,32 @@ test('registry never exposes secrets and cannot enable provider calls in product
     PAPERWORK_MODEL_COUNCIL_COST_CONTROLS_READY: 'true',
   });
   assert.equal(acknowledgementCannotEnable.find((provider) => provider.id === 'openai')?.enabled, false);
+  const productionDocumentAgent = getProviderRuntimesV1({
+    NODE_ENV: 'production',
+    PAPERWORK_DOCUMENT_AGENT_ENABLED: 'true',
+    PAPERWORK_PUBLIC_GATEWAY_MODE: 'invite',
+    PAPERWORK_PROVIDER_SPEND_CAP_CONFIGURED: 'true',
+    PAPERWORK_PUBLIC_APP_ORIGIN: 'https://paperwork.example',
+    PAPERWORK_GATEWAY_ACCESS_TOKEN_SHA256: 'a'.repeat(64),
+    PAPERWORK_PUBLIC_PROVIDER: 'openai',
+    OPENAI_API_KEY: 'production-secret',
+    OPENAI_MODEL: 'production-model',
+    ANTHROPIC_API_KEY: 'must-remain-disabled',
+    ANTHROPIC_MODEL: 'another-model',
+  }, 'document_agent');
+  assert.equal(productionDocumentAgent.find((provider) => provider.id === 'openai')?.enabled, true);
+  assert.equal(productionDocumentAgent.find((provider) => provider.id === 'anthropic')?.enabled, false);
+  assert.equal(JSON.stringify(getPublicProviderCatalogV1({
+    NODE_ENV: 'production',
+    PAPERWORK_DOCUMENT_AGENT_ENABLED: 'true',
+    PAPERWORK_PUBLIC_GATEWAY_MODE: 'invite',
+    PAPERWORK_PROVIDER_SPEND_CAP_CONFIGURED: 'true',
+    PAPERWORK_PUBLIC_APP_ORIGIN: 'https://paperwork.example',
+    PAPERWORK_GATEWAY_ACCESS_TOKEN_SHA256: 'a'.repeat(64),
+    PAPERWORK_PUBLIC_PROVIDER: 'openai',
+    OPENAI_API_KEY: 'production-secret',
+    OPENAI_MODEL: 'production-model',
+  }, undefined, 'document_agent')).includes('production-secret'), false);
 });
 
 test('truncated Mistral envelopes are rejected', async () => {

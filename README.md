@@ -28,6 +28,14 @@ withholds the entire result when the payload, consent, model identity, response,
 receipt, or evidence fails validation. Models return data only; PaperWork owns
 all rendered copy and components.
 
+The hosted architecture is an invite-only private beta. It exchanges a strong
+access pass for a short-lived anonymous HTTP-only session, issues a one-use run
+grant bound to the exact request digest and model target, and atomically applies
+D1-backed replay, quota, budget, and concurrency controls before contacting one
+operator-selected provider. D1 stores bounded admission metadata only—not PDF
+bytes, passages, prompts, filenames, or model output. The localhost build keeps
+browser-direct Ollama as a separate path.
+
 The generic contract covers résumés, offers, contracts, invoices, receipts,
 forms, letters, legal notices, financial, academic, identity, and medical
 documents, with an `other` fallback. This is still an early human-review tool,
@@ -45,7 +53,7 @@ ambiguous evidence are safely withheld instead of guessed.
 | What should I do first? | A prioritized, checkable action plan |
 | What proves it? | An exact cited passage or image region for each important claim |
 | What is uncertain? | Explicit inference, suggestion, conflict, and unconfirmed labels |
-| Where did my data go? | A human-readable processing receipt and technical event log |
+| Where did my data go? | A human-readable processing and model-transfer receipt |
 
 ## Try it locally
 
@@ -89,15 +97,21 @@ open-weight, but using their hosted APIs is still metered; Ollama is the
 self-hosted path for operator-chosen compatible models. “Open-weight” describes
 model licensing, not free compute or a privacy guarantee.
 
-All live agent runs currently require `NODE_ENV=development` and a loopback
-application origin. Hosted calls go browser → PaperWork gateway → the one
-selected provider; the analysis route accepts only `localhost`, `127.0.0.1`,
-or `::1`. Ollama goes browser →
+Local live runs require `NODE_ENV=development` and a loopback application
+origin. Hosted private-beta calls go browser → PaperWork gateway → the one
+selected provider after an anonymous session and one-use D1 grant. Production
+accepts only the configured canonical HTTPS origin and only the single provider
+named by the operator. Ollama goes browser →
 the exact configured `http://localhost[:port]` or
 `http://127.0.0.1[:port]`, sends no credential or PDF bytes, bypasses the
 gateway, and is selected alone in v1. Missing, test, production, and unexpected
-environment values fail closed. Public hosted use first needs real user
-authorization, distributed quotas, replay protection, and provider spend caps.
+environment values fail closed unless the complete hosted boundary is present.
+
+See the [hosting runbook](docs/HOSTING.md) for the exact production path,
+runtime values, D1 metadata schema, spend-cap requirement, and launch gate. The
+raw invite pass and provider keys belong only in hosted secrets and must never
+be committed. A shared invite pass is for a bounded beta; broadly anonymous
+access still needs a separately reviewed identity/bot and edge-abuse layer.
 
 ## Non-negotiable product rules
 
@@ -112,9 +126,10 @@ authorization, distributed quotas, replay protection, and provider spend caps.
 
 The application uses React, TypeScript, Vinext, and an exact-pinned
 `pdfjs-dist` browser worker inlined into the authorization-gated parser module.
-It has no database, account system, telemetry, or
-object storage. The optional server gateway has fixed provider endpoints,
-server-only credentials, no tools, bounded request/response sizes, strict
+It has no document database, account system, telemetry, or object storage. The
+hosted beta uses D1 only for short-lived anonymous admission metadata. The
+server gateway has fixed provider endpoints, server-only credentials, one-use
+grants, distributed quotas, no tools, bounded request/response sizes, strict
 structured output, source-quote validation, and `no-store` responses.
 The browser-direct Ollama adapter accepts only canonical HTTP loopback origins,
 omits credentials, tools, retrieval and PDF bytes, caps time and output, and
@@ -145,7 +160,7 @@ and additional narrowly verified document types.
 - Use [Discussions](https://github.com/anshhu-man/paperwork/discussions) for questions and early ideas.
 - Read [CONTRIBUTING.md](CONTRIBUTING.md), the [code of conduct](CODE_OF_CONDUCT.md), and [SECURITY.md](SECURITY.md) before contributing.
 
-The prepared [launch kit](docs/LAUNCH-KIT.md) contains faceless demo and community-post templates. Public promotion is intentionally gated on a genuinely usable hosted build.
+The prepared [launch kit](docs/LAUNCH-KIT.md) contains faceless demo and community-post templates. Promote the invite beta only after the [hosting launch gate](docs/HOSTING.md#launch-gate) passes; do not advertise the shared-pass mode as unrestricted anonymous access.
 
 ## License
 

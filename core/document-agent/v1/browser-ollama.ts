@@ -19,7 +19,13 @@ const CONSENT_MAX_AGE_MS = 15 * 60 * 1_000;
 const CONSENT_CLOCK_SKEW_MS = 60 * 1_000;
 export const DOCUMENT_AGENT_OLLAMA_TIMEOUT_MS_V1 = 120_000;
 
-function isLoopback(hostname: string) { return hostname === 'localhost' || hostname === '127.0.0.1'; }
+function isPageLoopback(hostname: string) {
+  return hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '[::1]';
+}
+
+function isOllamaLoopback(hostname: string) {
+  return hostname === 'localhost' || hostname === '127.0.0.1';
+}
 
 export function browserDirectDocumentAgentOllamaEndpointV1(
   target: DocumentAgentRequestV1['payload']['providerTarget'],
@@ -30,7 +36,7 @@ export function browserDirectDocumentAgentOllamaEndpointV1(
     const page = new URL(pageOrigin);
     const recipientOrigin = target.recipient.slice('Ollama at '.length);
     const recipient = new URL(recipientOrigin);
-    if (!isLoopback(page.hostname) || !isLoopback(recipient.hostname)) return null;
+    if (!isPageLoopback(page.hostname) || !isOllamaLoopback(recipient.hostname)) return null;
     if (page.protocol !== 'http:' || recipient.protocol !== 'http:') return null;
     if (page.username || page.password || page.origin !== pageOrigin || page.pathname !== '/' || page.search || page.hash) return null;
     if (recipient.username || recipient.password || recipient.origin !== recipientOrigin || recipient.pathname !== '/' || recipient.search || recipient.hash) return null;
@@ -90,7 +96,13 @@ function directResponse(
   result: DocumentAgentRunResultV1,
 ): DocumentAgentResponseV1 {
   const target = request.payload.providerTarget;
-  const status = result.status === 'completed' ? 'completed' : result.status === 'failed' ? 'failed' : 'not_sent';
+  const status = result.status === 'completed'
+    ? 'completed'
+    : result.status === 'failed'
+      ? result.issueCode === 'network_failure' || result.issueCode === 'provider_timeout'
+        ? 'delivery_unknown'
+        : 'failed'
+      : 'not_sent';
   const startedAt = result.status === 'unavailable' ? null : result.startedAt;
   const completedAt = result.status === 'unavailable' ? null : result.completedAt;
   return {

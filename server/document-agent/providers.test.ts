@@ -81,9 +81,10 @@ function analysis(): ProviderDocumentAnalysisV1 {
 
 function providerEnvelope(provider: ProviderIdV1, output: ProviderDocumentAnalysisV1) {
   const content = JSON.stringify(output);
-  if (provider === 'openai' || provider === 'deepseek') return { status: 'completed', output: [{ type: 'message', content: [{ type: 'output_text', text: content }] }] };
-  if (provider === 'anthropic') return { stop_reason: 'end_turn', content: [{ type: 'text', text: content }] };
-  if (provider === 'mistral') return { choices: [{ finish_reason: 'stop', message: { content } }] };
+  const model = runtime(provider).model;
+  if (provider === 'openai' || provider === 'deepseek') return { model, status: 'completed', output: [{ type: 'message', content: [{ type: 'output_text', text: content }] }] };
+  if (provider === 'anthropic') return { model, stop_reason: 'end_turn', content: [{ type: 'text', text: content }] };
+  if (provider === 'mistral') return { model, choices: [{ finish_reason: 'stop', message: { content } }] };
   return { model: runtime(provider).model, done: true, done_reason: 'stop', message: { content } };
 }
 
@@ -146,4 +147,20 @@ test('hosted document adapters withhold wrong citations and server-side Ollama',
   assert.equal(fetches, 0);
   assert.equal(local.status, 'unavailable');
   assert.throws(() => buildDocumentAgentProviderRequestV1(runtime('ollama'), payload('ollama')), /browser-direct/);
+});
+
+test('all hosted document adapters reject a mismatched or missing response model identity', async () => {
+  for (const provider of ['openai', 'anthropic', 'mistral', 'deepseek'] as const) {
+    const validEnvelope = providerEnvelope(provider, analysis());
+    for (const envelope of [
+      { ...validEnvelope, model: 'different-model' },
+      Object.fromEntries(Object.entries(validEnvelope).filter(([name]) => name !== 'model')),
+    ]) {
+      const result = await runDocumentAgentProviderV1(runtime(provider), payload(provider), {
+        fetchImpl: async () => new Response(JSON.stringify(envelope), { status: 200 }),
+      });
+      assert.equal(result.status, 'failed', provider);
+      if (result.status === 'failed') assert.equal(result.issueCode, 'invalid_provider_output', provider);
+    }
+  }
 });

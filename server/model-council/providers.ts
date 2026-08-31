@@ -183,8 +183,8 @@ function extractOllamaText(value: JsonRecord) {
     : undefined;
 }
 
-export function parseProviderResponseTextV1(provider: ProviderIdV1, value: unknown) {
-  if (!isRecord(value)) return undefined;
+export function parseProviderResponseTextV1(provider: ProviderIdV1, expectedModel: string, value: unknown) {
+  if (!isRecord(value) || value.model !== expectedModel) return undefined;
   switch (provider) {
     case 'openai':
     case 'deepseek': return extractResponsesText(value);
@@ -299,7 +299,7 @@ export async function runProviderV1(
     } catch {
       return failedResult(runtime, startedAt, now(), 'invalid_provider_output', false);
     }
-    const outputText = parseProviderResponseTextV1(runtime.id, envelope);
+    const outputText = parseProviderResponseTextV1(runtime.id, runtime.model!, envelope);
     if (!outputText || new TextEncoder().encode(outputText).byteLength > MAX_PROVIDER_RESPONSE_BYTES) {
       return failedResult(runtime, startedAt, now(), 'invalid_provider_output', false);
     }

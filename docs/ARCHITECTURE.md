@@ -4,9 +4,9 @@ PaperWork turns a locally parsed PDF into a model-reviewed, evidence-addressed
 webpage while showing users what text leaves the browser, which model receives
 it, what the model returned, and what PaperWork independently validated.
 
-This document describes the implemented LLM-first v0.1 path, retained legacy
-components, and later production boundaries. Sections marked **Planned** are
-not implemented.
+This document describes the implemented LLM-first v0.1 path, invite-only online
+boundary, retained legacy components, and later extensions. Sections marked
+**Planned** are not implemented.
 
 ## What exists today
 
@@ -24,8 +24,8 @@ Worker-compatible hosting.
 | Consent | Request ID, approval time, prompt/output-contract versions, source passages, fingerprint, provider, model, recipient, digest, and byte count are bound together and rechecked before transfer. |
 | Results | PaperWork validates the complete schema, source revision, segment, page, span, quote, normalized value, response target, receipt, digest, and byte count before constructing a code-owned view model. Any failed invariant withholds the result. |
 | Transparency receipt | Shows the exact provider/model/recipient, route, payload digest and byte count, validation boundary, and provider-attributed retention/training disclosure. |
-| State | React component memory only. Task completion and other state disappear when the page lifecycle ends or reloads. |
-| External systems | No provider credentials are shipped. A fixed-endpoint hosted-provider gateway is present but disabled by default. Browser-direct Ollama accepts only an exact HTTP loopback origin. There is no application database, object storage, account service, or telemetry integration. |
+| State | Document bytes, passages, results and task completion remain in React memory. Hosted invite mode also uses a short-lived HTTP-only anonymous session and D1 admission records; neither contains document text. |
+| External systems | Provider credentials remain server-only. Hosted invite mode enables one operator-selected fixed provider behind exact-origin, grant and D1 admission. Browser-direct Ollama accepts only an exact HTTP loopback origin. There is no document database, object storage, account service, or telemetry integration. |
 
 The host must still deliver HTML, JavaScript, CSS, fonts, and images. That
 ordinary web traffic is distinct from document processing and may create
@@ -53,8 +53,12 @@ core/document-agent/v1
 server/document-agent + app/api/document-agent
   ├─ fixed provider registry and server-only credentials
   ├─ no-tool hosted structured-output adapters with bounded responses
-  ├─ same-origin, no-store catalog and hosted analysis gateway
+  ├─ exact-origin catalog, anonymous session, one-use grant and analysis routes
+  ├─ D1-backed replay, quota, cost-unit and concurrency admission metadata
   └─ fail-closed rejection of Ollama on the server path
+
+db/schema.ts + drizzle/
+  └─ metadata-only D1 schema and production migration; no document storage
 
 app/globals.css       product styling
 app/layout.tsx        application shell and metadata
@@ -65,8 +69,8 @@ next.config.ts        Next-compatible configuration
 The repository also retains the earlier `core/action-pack/v1` deterministic
 assembler, `core/model-council/v1`, and `app/model-council.tsx` for compatibility
 and regression tests. They are not the primary webpage execution path. It does
-not include OCR, URL ingestion, persistence, accounts, telemetry, or public
-gateway abuse controls.
+not include OCR, URL ingestion, document persistence, accounts, telemetry, or
+unrestricted anonymous model access.
 
 ## Architectural invariants
 
@@ -112,7 +116,9 @@ links, OCR, persistence, and sharing remain planned extensions:
           v
 [Fresh digest-bound consent]
           |
-          +-> hosted: browser -> PaperWork gateway -> selected provider
+          +-> hosted: anonymous session + one-use digest/target grant
+          |           -> atomic D1 quota/budget/concurrency reservation
+          |           -> PaperWork gateway -> selected provider
           +-> local:  browser -> exact loopback Ollama; gateway not_sent
           |
           v
@@ -132,10 +138,35 @@ consented HTTP loopback Ollama origin and bypasses the gateway. There is no
 hidden fallback provider or multi-provider fan-out. A valid citation proves
 source-location integrity, not that the model's interpretation is correct.
 
-The hosted document-agent route remains loopback-development-only. A public
-asset deployment without an approved configured analysis engine fails closed;
-public hosted inference still requires authentication, distributed quotas,
-replay protection, secret management, and spend controls.
+The hosted document-agent route supports a fail-closed invite-only production
+mode. It requires one exact HTTPS application origin, an anonymous HTTP-only
+session, a one-use grant bound to the request/target/digest, a healthy D1
+binding, distributed per-session/global budgets and concurrency, one public
+provider, server-only credentials, and an operator-confirmed provider hard
+spend cap. The legacy Model Council remains loopback-development-only. A shared
+invite pass is not the final authorization design for unrestricted anonymous
+traffic.
+
+### Hosted admission records
+
+`paperwork_gateway_sessions` stores only credential hashes, the invite digest,
+and create/expiry/revocation timestamps. `paperwork_gateway_grants` stores a
+grant hash, random request ID, session hash, provider/model/recipient, approved
+payload digest and byte count, consent/issue/expiry/consumption/completion
+timestamps, conservative cost units, state, and a short lease. A single
+conditional D1 update consumes the grant and reserves hourly requests, daily
+session/global units, and global in-flight capacity before provider delivery.
+Uncertain delivery is not refunded. Expired leases release concurrency.
+Sessions and unused grants become eligible for opportunistic pruning after the
+configured threshold (24 hours by default); consumed grants use their later
+consumption time so rolling quota evidence is retained for the full window. A
+guaranteed deletion deadline requires operator-scheduled D1 cleanup because a
+dormant deployment may receive no later cleanup-triggering request.
+
+Neither table accepts PDF bytes, passages, filenames, source fingerprints,
+prompts, model output, raw passes/tokens, or raw IP addresses. R2 remains
+unbound. Infrastructure-level logs are outside this application schema and
+must not be described as absent merely because PaperWork does not create them.
 
 ## Legacy retained architecture
 
@@ -261,16 +292,25 @@ tools, retrieval, the source fingerprint and PDF bytes, and caps response size
 and wait time. A browser abort or timeout does not prove that Ollama stopped a
 request it already received.
 
-Provider calls require an explicit development environment and a loopback
-application origin; missing, test, production, unexpected, and public-origin
-requests fail closed. Local adapter testing also has bounded request sizes,
-one-use request IDs and a small process-local concurrency cap, but those are not
-substitutes for public authentication, distributed quotas or provider spend
-controls.
+Legacy Model Council provider calls require an explicit development environment
+and a loopback application origin. The primary document-agent provider call may
+also run in the production invite mode described above. Local adapter testing
+retains bounded request sizes, one-use request IDs and a small process-local
+concurrency cap; production relies on the anonymous session, one-use D1 grant,
+distributed admission, exact origin, server secrets, and provider spend cap.
 
-## Receipt architecture
+## Current document-agent receipt
 
-The current local receipt is generated from completed `ProcessingEvent` records
+The primary interface renders a validated `DocumentAgentResponseV1` receipt. It
+binds the random request ID, fresh consent, exact provider/model/recipient,
+gateway and provider transfer states, approved payload digest and byte count,
+provider-attributed policy disclosure, timestamps, and schema/source-span
+validation. The browser validates that receipt again before code-owned UI is
+rendered.
+
+## Legacy TrustedActionPack receipt
+
+The retained TrustedActionPack receipt is generated from completed `ProcessingEvent` records
 and the final trusted pack. It identifies the source by user-readable name and
 SHA-256 fingerprint, records parser/rules/validator versions, lists transfers
 and external references, summarizes validation, and conservatively reports

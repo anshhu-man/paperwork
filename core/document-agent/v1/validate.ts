@@ -941,7 +941,7 @@ export function parseDocumentAgentResponseV1(
     const transferModel = transferObject && stringAt(transferObject.model, '$.receipt.transfer.model', issues, { maximum: 256, inert: true }) ? transferObject.model : result.model;
     const transferRecipient = transferObject && stringAt(transferObject.recipient, '$.receipt.transfer.recipient', issues, { maximum: 512, inert: true }) ? transferObject.recipient : '';
     const channel = transferObject && enumAt(transferObject.channel, '$.receipt.transfer.channel', issues, ['gateway_to_provider', 'browser_to_provider'] as const) ? transferObject.channel : 'browser_to_provider';
-    const transferStatus = transferObject && enumAt(transferObject.status, '$.receipt.transfer.status', issues, ['completed', 'failed', 'not_sent'] as const) ? transferObject.status : 'not_sent';
+    const transferStatus = transferObject && enumAt(transferObject.status, '$.receipt.transfer.status', issues, ['completed', 'failed', 'delivery_unknown', 'not_sent'] as const) ? transferObject.status : 'not_sent';
     const transferStartedAt = transferObject?.startedAt === null ? null : transferObject && timestampAt(transferObject.startedAt, '$.receipt.transfer.startedAt', issues) ? transferObject.startedAt : null;
     const transferCompletedAt = transferObject?.completedAt === null ? null : transferObject && timestampAt(transferObject.completedAt, '$.receipt.transfer.completedAt', issues) ? transferObject.completedAt : null;
     const transferDigest = transferObject ? digestAt(transferObject.payloadDigest, '$.receipt.transfer.payloadDigest', issues) : consent.previewDigest;
@@ -980,7 +980,13 @@ export function parseDocumentAgentResponseV1(
       && Date.parse(receipt.transfer.completedAt) < Date.parse(receipt.transfer.startedAt)) {
     issues.add('$.receipt.transfer.completedAt', 'invalid_time_order', 'Provider completion cannot precede its start.');
   }
-  const expectedTransferStatus = result.status === 'completed' ? 'completed' : result.status === 'failed' ? 'failed' : 'not_sent';
+  const expectedTransferStatus = result.status === 'completed'
+    ? 'completed'
+    : result.status === 'failed'
+      ? result.issueCode === 'network_failure' || result.issueCode === 'provider_timeout'
+        ? 'delivery_unknown'
+        : 'failed'
+      : 'not_sent';
   if (receipt.transfer.status !== expectedTransferStatus) issues.add('$.receipt.transfer.status', 'result_status_mismatch', 'Provider transfer status must match the model run result.');
   if (result.status === 'unavailable') {
     if (transferHasTimes) issues.add('$.receipt.transfer', 'unavailable_has_transfer', 'An unavailable model cannot have provider transfer timestamps.');

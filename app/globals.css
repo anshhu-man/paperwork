@@ -141,8 +141,8 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .preview-flow-link { margin: 13px 0 0; padding: 0; border: 0; background: none; color: var(--green); font-size: 11px; font-weight: 700; cursor: pointer; }
 .agent-engine-field { margin: 0 0 16px; display: grid; gap: 7px; }
 .agent-engine-field > span { color: var(--ink); font-size: 10px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; }
-.agent-engine-field select { width: 100%; min-width: 0; padding: 10px 34px 10px 11px; border: 1px solid #bbc9bf; border-radius: 8px; background: white; color: var(--ink); font-size: 11px; font-weight: 700; }
-.agent-engine-field select:disabled { cursor: not-allowed; opacity: .65; }
+.agent-engine-field select, .agent-engine-field input { width: 100%; min-width: 0; padding: 10px 34px 10px 11px; border: 1px solid #bbc9bf; border-radius: 8px; background: white; color: var(--ink); font-size: 11px; font-weight: 700; }
+.agent-engine-field select:disabled, .agent-engine-field input:disabled { cursor: not-allowed; opacity: .65; }
 .agent-engine-field small { color: #667169; font-size: 9px; line-height: 1.45; }
 .engine-loading { margin: 10px 0 0; color: var(--muted); font-size: 10px; }
 .assurance-note { margin: 20px 0 16px; padding: 13px; border: 1px solid #cfdad2; border-radius: 9px; background: rgba(255,255,255,.58); }
@@ -169,6 +169,13 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .payload-approval-card dl div { padding: 10px 0; display: flex; justify-content: space-between; gap: 18px; border-bottom: 1px solid #d8e0d8; font-size: 11px; }
 .payload-approval-card dt { color: var(--muted); }
 .payload-approval-card dd { margin: 0; text-align: right; font-weight: 700; overflow-wrap: anywhere; }
+.gateway-access-card { margin: 18px 0 0; padding: 13px; border: 1px solid #c4d2c8; border-radius: 10px; background: rgba(255,255,255,.62); }
+.gateway-access-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.gateway-access-heading span { color: var(--muted); font-size: 9px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; }
+.gateway-access-heading strong { color: var(--green); font-size: 10px; }
+.gateway-access-card p { margin: 8px 0; color: #59665e; font-size: 10px; line-height: 1.45; }
+.gateway-access-card button { padding: 0; border: 0; background: none; color: var(--green); font-size: 10px; font-weight: 750; cursor: pointer; }
+.gateway-access-card .agent-engine-field { margin: 12px 0 0; }
 .payload-local-state { color: var(--green); font-size: 10px; font-weight: 800; text-transform: uppercase; letter-spacing: .06em; }
 .payload-route-summary { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 8px; }
 .payload-route-summary > div { min-width: 0; padding: 12px; border: 1px solid #e0dcd2; border-radius: 9px; background: #faf9f5; }

@@ -169,6 +169,7 @@ test('analysis route returns the exact checked schema and both transfer hops', a
     fetches += 1;
     fetchedUrl = input instanceof Request ? input.url : String(input);
     return new Response(JSON.stringify({
+      model: 'openai-test-model',
       status: 'completed',
       output: [{ type: 'message', content: [{ type: 'output_text', text: JSON.stringify(validAnalysis()) }] }],
     }), { status: 200, headers: { 'content-type': 'application/json' } });

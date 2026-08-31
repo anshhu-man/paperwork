@@ -364,7 +364,7 @@ export interface DocumentAgentTransferReceiptV1 {
   readonly model: string;
   readonly recipient: string;
   readonly channel: 'gateway_to_provider' | 'browser_to_provider';
-  readonly status: 'completed' | 'failed' | 'not_sent';
+  readonly status: 'completed' | 'failed' | 'delivery_unknown' | 'not_sent';
   readonly startedAt: string | null;
   readonly completedAt: string | null;
   readonly payloadDigest: DocumentAgentDigestV1;

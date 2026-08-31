@@ -309,10 +309,18 @@ test('rejects duplicate scalar findings and negated requirement fragments', () =
 test('browser-direct Ollama accepts only exact loopback origins', () => {
   const target = { provider: 'ollama' as const, model: MODEL, recipient: RECIPIENT };
   assert.equal(browserDirectDocumentAgentOllamaEndpointV1(target, 'http://localhost:3000'), 'http://127.0.0.1:11434/api/chat');
+  assert.equal(
+    browserDirectDocumentAgentOllamaEndpointV1(
+      target,
+      'http://[::1]:3000',
+    ),
+    'http://127.0.0.1:11434/api/chat',
+  );
   for (const [recipient, origin] of [
     ['Ollama at https://127.0.0.1:11434', 'http://localhost:3000'],
     ['Ollama at http://127.0.0.1:11434/path', 'http://localhost:3000'],
     ['Ollama at http://localhost.example:11434', 'http://localhost:3000'],
+    ['Ollama at http://[::1]:11434', 'http://[::1]:3000'],
     [RECIPIENT, 'https://localhost:3000'],
     [RECIPIENT, 'http://paperwork.example'],
   ]) {
@@ -389,6 +397,18 @@ test('browser-direct Ollama rejects a mismatched envelope model', async () => {
   });
   assert.equal(response.result.status, 'failed');
   if (response.result.status === 'failed') assert.equal(response.result.issueCode, 'invalid_provider_output');
+});
+
+test('browser-direct receipts make uncertain provider delivery explicit', async () => {
+  const request = await validRequest();
+  const response = await runBrowserDirectDocumentAgentOllamaV1(request, {
+    pageOrigin: 'http://localhost:3000',
+    now: () => '2026-08-31T12:00:01.000Z',
+    fetchImpl: async () => { throw new TypeError('connection ended without a response'); },
+  });
+  assert.equal(response.result.status, 'failed');
+  if (response.result.status === 'failed') assert.equal(response.result.issueCode, 'network_failure');
+  assert.equal(response.receipt.transfer.status, 'delivery_unknown');
 });
 
 test('response validation binds completed results to completed transfer timestamps', async () => {
