@@ -1,52 +1,44 @@
 # PaperWork privacy threat model
 
-Status: draft for the v0.1 browser-local PDF milestone and disabled-by-default
-multi-provider review extension.
+Status: draft for the v0.1 LLM-first document-agent milestone.
 
 This document separates behavior that exists today from intended behavior. A
 planned control is not a security or privacy guarantee.
 
 ## Current v0.1 boundary
 
-PaperWork now has one narrow real-processing mode. After two explicit local
-permissions, it reads a selected PDF in the current browser tab, verifies its
-file signature and limits, computes SHA-256, and sends a private byte copy to a
-bundled inline `pdfjs-dist` module worker. Every page must produce meaningful
-native text. PaperWork then runs deterministic English offer-letter or
-résumé-structure rules, independent semantic/citation/action/event checks, and
-renders only a privately registered `TrustedActionPackV1`.
+PaperWork reads a selected PDF in the current browser tab only after explicit
+local-read permission. It verifies file signature and limits, computes SHA-256,
+and sends a private byte copy to a bundled inline `pdfjs-dist` module worker.
+Every page must produce meaningful native text. The original PDF bytes remain
+in the browser; PDF.js only parses and addresses text, it does not interpret the
+document.
 
-The trusted local run sends no selected PDF bytes or extracted text to an AI
-provider or PaperWork document-processing server. After that run, a separate
-offer-letter-only Model Council workspace may be enabled for local development testing. The original
-PDF bytes still never enter that path. A user must choose provider recipients,
-select unchanged extracted passages, inspect the exact logical payload and its
-SHA-256 digest, and give digest-bound approval before the browser sends those
-passages. Hosted providers are reached through the PaperWork gateway. An exact
-HTTP loopback Ollama recipient is reached directly from the browser and must be
-selected separately.
+The primary workflow deliberately transfers extracted text to exactly one
+selected model. PaperWork first stops and displays the exact logical passages,
+provider, model, recipient, and route. A separate approval binds the request
+ID, approval timestamp, prompt/output-contract versions, source fingerprint,
+payload byte count, and SHA-256 digest. Hosted providers are reached through the
+PaperWork gateway. An exact HTTP loopback Ollama recipient is reached directly
+from the browser, with the gateway recorded as `not_sent`.
 
-Provider review is disabled by default, requires an explicit development
-environment and loopback application origin, and includes no provider
-credentials in the repository. Exact model IDs and
-sanitized recipients are digest-bound and checked again before transfer. The
-hosted gateway does not intentionally persist or log document bodies, and its
-responses use `Cache-Control: no-store`. A direct Ollama run bypasses that
-gateway and records it as `not_sent`; provider infrastructure
-and hosting-level logs remain separate boundaries governed by their operators
-and policies. There is no application database, object store, account system,
-telemetry integration, URL fetcher, or OCR service. The file, extracted
-segments, trusted pack, and task state remain in page memory for the current
-lifecycle. The app does not claim independently verifiable memory deletion; its
-local receipt therefore uses the conservative browser state
-`status_unavailable`.
+The provider receives approved extracted passages and fixed instruction
+framing, not original PDF bytes. It must return a closed typed report. PaperWork
+then validates schema, response target, receipt, digest, source revision,
+segment, page, span, unchanged quote, and value-to-evidence grounding. Invalid,
+incomplete, mismatched, or unsupported output is withheld. Accepted output is
+rendered only through escaped, code-owned components and remains marked for
+human review. Citation matching proves traceability to approved text, not the
+correctness of the model's classification or interpretation.
 
-The synthetic sample is a real two-page PDF served as a normal application
-asset and then passed through the same browser-local extraction and trust path.
-It is not pre-trusted result JSON. Its exact SHA-256 digest is recognized by the
-trusted assembler, so manually re-uploading identical bytes still produces a
-`sample_fixture` result with a do-not-submit action rather than a live-offer
-action.
+The hosted gateway does not intentionally persist or log document bodies, and
+responses use `Cache-Control: no-store`. These controls do not prove that
+provider, gateway-host, or network infrastructure retained nothing. Their logs,
+retention, training controls, and deletion capabilities are governed by their
+operators. There is no application database, object store, account system,
+telemetry integration, URL fetcher, or OCR service. Page state remains in memory
+for the current lifecycle, and PaperWork does not claim independently verifiable
+memory deletion.
 
 The host still serves the application and may receive ordinary web-request
 metadata such as an IP address, user agent, requested path, and time. Browser
@@ -60,38 +52,33 @@ UI does not create a verifiable deletion record.
 Application assets: hosting service -> browser
                                    (ordinary request metadata may exist)
 
-Selected PDF: user -> browser file input -> explicit local permission
-                   -> fresh, ordered, one-use authorization ledger
-                   -> byte signature/limits/SHA-256
-                   -> bundled inline local PDF worker
-                   -> immutable page-region source segments
-                   -> deterministic document-specific rules
-                   -> independent semantic/action/event validation
-                   -> private trusted-pack registration -> result UI
+Selected PDF -> browser-local signature/limit checks
+             -> browser-local PDF.js extraction
+             -> canonical segments + source fingerprint
 
-Local-run document content -X-> no AI provider, PaperWork processing server, telemetry,
-                      database, object storage, URL fetch, or external knowledge
+Nothing sent yet
+  -> user inspects exact logical payload
+  -> user approves one named provider/model/recipient
+  -> request ID + approval time + contracts + payload are SHA-256 bound
 
-Optional review after the trusted local result and a new explicit approval:
-
-selected unchanged segments -> exact payload preview + SHA-256 digest
-  -> named transport/model/recipient consent
+Approved extracted passages
        hosted: browser -> PaperWork model gateway -> fixed provider endpoint
        local:  browser -> exact HTTP loopback Ollama origin
                PaperWork model gateway -X-> not sent
-  -> strict ProviderAnalysisV1 -> source quote/schema checks in browser
-     (the hosted gateway also checks hosted responses)
-  -> separate untrusted model comparison + truthful transfer receipt
+  -> closed ProviderDocumentAnalysisV1
+  -> schema + revision + segment + page + span + quote validation
+  -> response + receipt + target + digest validation
+  -> code-owned webpage, human review required
 
-Original PDF bytes -X-> never enter the optional provider path
-Provider output    -X-> never enters the TrustedActionPackV1 authority
+Original PDF bytes -X-> never enter the provider path
+Provider output    -X-> cannot author UI, execute actions, or bypass validation
 ```
 
 Current trust boundaries are the user's device and browser, the served
 application code and dependencies, and the hosting/CDN layer used to deliver
-that code. When hosted review is enabled, it adds the PaperWork gateway and
-each explicitly selected hosted provider. Direct Ollama instead adds the exact
-loopback Ollama process without adding the gateway to the document-text path.
+that code. A hosted run adds the PaperWork gateway and the one explicitly
+selected hosted provider. Direct Ollama instead adds the exact loopback Ollama
+process without adding the gateway to the document-text path.
 The self-host operator controls credentials, logs, retention, and compute.
 PaperWork does not control the user's browser extensions, device,
 network, provider infrastructure, or infrastructure-level logs.
@@ -108,12 +95,10 @@ network, provider infrastructure, or infrastructure-level logs.
 
 ## Current trust boundaries and planned modes
 
-The native-text PDF path through trusted assembly is implemented locally. A
-strict optional comparison layer is implemented but remains disabled unless a
-self-host operator deliberately configures it. Hosted models use its gateway;
-loopback Ollama is browser-direct and mutually exclusive with them. OCR, URL
-fetching, persistence, analytics, exports, provider-enriched trusted packs, and
-sharing remain design targets rather than current behavior:
+Native-text PDF parsing is local. Interpretation is performed by one selected
+model after payload preview and approval. Hosted models use the gateway;
+loopback Ollama is browser-direct. OCR, URL fetching, persistence, analytics,
+exports, and sharing remain design targets rather than current behavior:
 
 ```text
 source
@@ -121,11 +106,10 @@ source
   -> browser-local native-text extraction (implemented) or isolated OCR (planned)
   -> normalized, addressable source segments
   -> outbound-data preview and explicit user choice
-  -> deterministic local rules (implemented) or optional model/provider comparison (implemented, disabled by default)
-  -> structured claims and actions
-  -> citation and policy validation
-  -> trusted-ledger assembly
-  -> Action Pack and analysis receipt
+  -> one selected provider/model/recipient
+  -> closed typed findings, requirements, conflicts and suggestion intents
+  -> schema, citation, value, target, consent and receipt validation
+  -> code-owned document view and transfer receipt
 ```
 
 Each arrow is a trust boundary that must have an explicit data contract. Before
@@ -138,6 +122,9 @@ not appear as product promises until they are implemented and testable.
 
 | Risk | Required mitigation before production |
 | --- | --- |
+| Stale consent or payload mutation | Put request ID and approval time inside the canonical payload digest; require a fresh preview and approval whenever source passages, contracts, or provider target change. |
+| Wrong provider, model, or recipient | Bind one exact target into consent and recheck it immediately before transfer and again when validating the response receipt. |
+| A model cites unrelated text | Require exact revision, segment, page, span, and unchanged quote; bind each normalized value to one evidence item and withhold the full result on mismatch. |
 | Synthetic output is mistaken for a private-document run | Label the sample PDF, recognize its immutable byte digest even after re-upload, process it through the same real local pipeline, emit `sample_fixture` provenance, and derive the receipt from observed events rather than fixture assurances. |
 | A sensitive source is transmitted unexpectedly | Default to no transfer; show the destination and exact outbound payload before consent; make the action button name the transfer. |
 | A local-model URL is deceptive or becomes an internal-network fetch primitive | Permit browser-direct inference only from an HTTP loopback PaperWork page to an exact canonical HTTP `localhost` or `127.0.0.1` Ollama origin; reject aliases, suffix hosts, credentials, paths, queries, fragments, HTTPS and IPv6; never route Ollama through the server gateway. |
@@ -147,15 +134,23 @@ not appear as product promises until they are implemented and testable.
 | A parser or OCR library is exploited | Run untrusted parsing with least privilege and resource limits; validate file signatures; cap pages, pixels, archive expansion, and processing time; patch dependencies. |
 | Temporary data or logs expose source content | Do not log source content by default; keep secrets out of URLs and errors; document every storage location and lifetime; test cleanup paths. |
 | Generated advice is unsupported or misleading | Require structured claims, source anchors, and citation validation; block or downgrade unsupported claims; keep professional-advice warnings specific and visible. |
-| A provider self-attests its own citations, safety checks, or receipt | Treat provider and imported Action Pack JSON as structural transport only; assemble renderable output exclusively from separately trusted source, semantic-validation, action-safety, and event ledgers. |
+| A provider self-attests its own citations, safety checks, or receipt | Treat provider JSON as untrusted transport; independently validate the closed schema, source evidence, value grounding, target, consent, and receipt before constructing renderable output. |
 | Citations point to the wrong passage | Preserve page/region/character anchors; verify that cited text supports each claim; allow OCR correction and revalidation. |
 | Data leaks between users or sessions | Isolate sessions and caches; use unpredictable identifiers; authorize every read; add cross-tenant tests before introducing persistence. |
 | Credentials are exposed | Keep provider keys out of source control, client bundles, logs, payload previews, and receipts; use scoped server secrets and clear self-host-operator boundaries. |
 | Public callers drain hosted-model spend | Provider calls require an explicit development environment and a loopback application origin; missing, test, production, unexpected, and public-origin requests fail closed. Add authentication/invite quota, distributed rate limits, replay protection and spend caps before designing a separately reviewed public enablement path. |
 | A timeout is mistaken for proof that processing stopped | State only that PaperWork stopped waiting; a provider or local Ollama process may continue after receiving the request. Record the attempted hop and do not claim deletion or non-delivery. |
 | A receipt overstates deletion | Record only observed events; use precise states such as `not stored`, `deletion requested`, `provider reported deletion`, or `status unavailable`; do not claim cryptographic or independent verification without it. |
-| Shared/exported results reveal sensitive data | Preview exports, support redaction, warn that receipts contain metadata, and never publish an Action Pack by default. |
+| Shared/exported results reveal sensitive data | Preview exports, support redaction, warn that receipts contain metadata, and never publish a document analysis by default. |
 | Dependencies or releases are compromised | Pin and review dependencies, scan releases, publish provenance where available, and maintain a private vulnerability-reporting path. |
+
+## Legacy retained boundary
+
+The repository retains the zero-transfer deterministic `TrustedActionPackV1`
+assembler and the multi-provider offer-letter Model Council for compatibility
+and regression tests. They are not the current primary webpage path; older
+references to their receipt or authority model apply only to that retained
+code.
 
 ## Evidence and interpretation policy
 

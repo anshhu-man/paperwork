@@ -1,12 +1,12 @@
 # PaperWork architecture
 
-PaperWork aims to turn supplied sources into an evidence-backed Action Pack
-while showing users what came from a source, what was inferred, what is only a
-suggestion, and where their data went.
+PaperWork turns a locally parsed PDF into a model-reviewed, evidence-addressed
+webpage while showing users what text leaves the browser, which model receives
+it, what the model returned, and what PaperWork independently validated.
 
-This document describes the implemented v0.1 browser-local PDF path, the
-disabled-by-default provider comparison path, the v1 trust contracts, and later
-production boundaries. Sections marked **Planned** are not implemented.
+This document describes the implemented LLM-first v0.1 path, retained legacy
+components, and later production boundaries. Sections marked **Planned** are
+not implemented.
 
 ## What exists today
 
@@ -17,13 +17,13 @@ Worker-compatible hosting.
 | Capability | Current behavior |
 | --- | --- |
 | File input | Accepts one PDF up to 10 MB. MIME and extension are advisory; the extractor checks `%PDF-` bytes before parsing. |
-| Permission | Reads no bytes until the user authorizes local text extraction and then local Action Pack assembly. Fresh ordered timestamps are bound to a one-use run UUID and retained as the first two receipt events. |
+| Permission | Reads no bytes until the user authorizes local extraction. After extraction it shows the exact outbound payload and requires a separate fresh model-send approval. |
 | Extraction | Exact-pinned `pdfjs-dist` runs in a bundled inline module worker. All pages must yield meaningful native text; scans and partial results are withheld. |
 | Canonical source | Computes SHA-256 from the bytes and creates immutable line segments with page-region anchors and extraction provenance. |
-| Trusted analysis | Deterministic English offer-letter rules recognize explicit role, deadline, start date, salary, location, and probation terms. A separate résumé ruleset verifies section-heading facts and labels résumé identity as an inference. No model or external knowledge enters either trusted Action Pack. |
-| Optional model review | For trusted offer-letter results, users may select unchanged passages and configured OpenAI, Anthropic, Mistral, DeepSeek, or Ollama recipients. Résumé packs are blocked from this offer-letter-only contract. Exact payload preview, digest-bound consent, uniform structured output, duplicate quote checks, and a separate receipt are implemented. Hosted APIs use the disabled-by-default gateway; loopback Ollama is browser-direct and selected alone. |
-| Results | The UI accepts only a privately registered `TrustedActionPackV1`; source facts, conflicts, unknowns, and suggestions remain distinct. |
-| Transparency receipt | Projects completed local events, components, validation counts, transfer records, and conservative retention state from the trusted pack. |
+| LLM interpretation | One explicitly selected Ollama, OpenAI, Anthropic, Mistral, or DeepSeek model returns a closed `ProviderDocumentAnalysisV1` containing typed findings, source-imposed requirements, conflicts, and bounded suggestion intents. |
+| Consent | Request ID, approval time, prompt/output-contract versions, source passages, fingerprint, provider, model, recipient, digest, and byte count are bound together and rechecked before transfer. |
+| Results | PaperWork validates the complete schema, source revision, segment, page, span, quote, normalized value, response target, receipt, digest, and byte count before constructing a code-owned view model. Any failed invariant withholds the result. |
+| Transparency receipt | Shows the exact provider/model/recipient, route, payload digest and byte count, validation boundary, and provider-attributed retention/training disclosure. |
 | State | React component memory only. Task completion and other state disappear when the page lifecycle ends or reloads. |
 | External systems | No provider credentials are shipped. A fixed-endpoint hosted-provider gateway is present but disabled by default. Browser-direct Ollama accepts only an exact HTTP loopback origin. There is no application database, object storage, account service, or telemetry integration. |
 
@@ -35,32 +35,22 @@ infrastructure logs outside this repository.
 
 ```text
 app/page.tsx
-  ├─ PDF selection and explicit local permissions
-  ├─ observed extraction/assembly progress and cancellation
-  ├─ trusted Action Pack view model
-  ├─ exact evidence, plan, source, failure, and receipt views
-  └─ synthetic PDF entry point and public-repository link
-
-app/model-council.tsx
-  ├─ provider catalog, passage selection, exact payload preview and consent
-  └─ separately labelled provider comparison and transfer receipt
+  ├─ PDF selection and explicit local-read permission
+  ├─ exact outbound payload preview and fresh model-send consent
+  ├─ singular provider execution and validated document-agent response
+  └─ code-owned overview, details, requirements, evidence, and receipt views
 
 core/local-analysis/v1/pdf.ts
   ├─ byte admission, fingerprint, limits, worker lifecycle
   └─ complete native-text extraction and canonical segments
 
-core/action-pack/v1/trusted-assembler.ts
-  ├─ deterministic offer-letter and résumé-structure rules with independent checks
-  ├─ observed event/receipt construction and final authority gate
-  └─ private identity-based trust registration
-
-core/model-council/v1
-  ├─ one strict seven-field provider output schema
-  ├─ canonical payload/digest and runtime parsers
-  ├─ exact source-quote validation and untrusted agreement comparison
+core/document-agent/v1
+  ├─ canonical payload/digest, fixed prompt, and closed report schema
+  ├─ exact revision/segment/page/span/quote and value grounding
+  ├─ request/response/receipt/target validation and code-owned view model
   └─ browser-direct, exact-loopback Ollama transport
 
-server/model-council + app/api/model-council
+server/document-agent + app/api/document-agent
   ├─ fixed provider registry and server-only credentials
   ├─ no-tool hosted structured-output adapters with bounded responses
   ├─ same-origin, no-store catalog and hosted analysis gateway
@@ -72,13 +62,11 @@ vite.config.ts        Vinext, Sites, and Cloudflare build integration
 next.config.ts        Next-compatible configuration
 ```
 
-The repository includes strict, versioned runtime contracts for canonical
-sources, model drafts, validated analyses, Action Packs, processing events,
-consent, transfers, corrections, and receipts in `core/action-pack/v1`. It also
-includes the narrow local PDF extractor, trusted document assembler, and
-optional model-comparison contracts/adapters. It does not include OCR, URL
-ingestion, persistence, public gateway abuse controls, or provider-authored
-trusted-pack assembly.
+The repository also retains the earlier `core/action-pack/v1` deterministic
+assembler, `core/model-council/v1`, and `app/model-council.tsx` for compatibility
+and regression tests. They are not the primary webpage execution path. It does
+not include OCR, URL ingestion, persistence, accounts, telemetry, or public
+gateway abuse controls.
 
 ## Architectural invariants
 
@@ -93,17 +81,16 @@ Future contributions should preserve these rules:
    payload and explicitly chooses it.
 5. Receipts report observed events and attributed provider statements, never
    invented assurances.
-6. A failed validator produces a blocked or downgraded claim, not an uncited
-   confident answer.
+6. A failed validator withholds the analysis rather than rendering an uncited
+   or internally inconsistent answer.
 7. Adding persistence, telemetry, an AI provider, or an external source changes
    the threat model and requires updated disclosures and tests.
 
-## Current local pipeline, optional comparison, and planned extensions
+## Current LLM-first pipeline and planned extensions
 
-The browser-local PDF branch through the trusted Action Pack UI is implemented.
-The optional provider-comparison branch, payload preview and consent UI are
-implemented but disabled by default. Images, links, OCR, provider-enriched
-trusted packs, persistence, and sharing remain planned extensions:
+Browser-local PDF parsing, payload preview, singular provider execution,
+strict response validation, and code-owned rendering are implemented. Images,
+links, OCR, persistence, and sharing remain planned extensions:
 
 ```text
 [Source adapters]
@@ -117,39 +104,48 @@ trusted packs, persistence, and sharing remain planned extensions:
 [Local native-text extraction | isolated OCR planned]
           |
           v
-[Normalized source model]
- immutable segments + page/region anchors + fingerprints
-          |
-          +------------------------+
-          |                        |
-          v                        v
-[Consent/payload preview]     [Evidence view]
-  (optional, implemented)       (implemented)
+[Normalized source model: immutable segments + page anchors + fingerprint]
           |
           v
-[Deterministic local rules] + [separate provider-neutral comparison]
+[Exact payload preview for one provider/model/recipient]
           |
           v
-[Structured claim graph]
+[Fresh digest-bound consent]
+          |
+          +-> hosted: browser -> PaperWork gateway -> selected provider
+          +-> local:  browser -> exact loopback Ollama; gateway not_sent
           |
           v
-[Citation and policy validator]
+[Closed ProviderDocumentAnalysisV1]
           |
-          +------------------------+
-          |                        |
-          v                        v
-[Action Pack UI]          [Event-derived analysis receipt]
+          v
+[Schema + evidence + target + receipt + digest validation]
+          |
+          v
+[Code-owned webpage + human-review label]
 ```
 
-The trusted v0.1 path runs extraction and deterministic analysis in the
-browser. Optional hosted requests cross the PaperWork gateway and then the
-explicitly selected provider. An Ollama request goes directly from an HTTP
-loopback page to the exact consented HTTP loopback Ollama origin, bypasses the
-gateway, and cannot be mixed with hosted providers in v1. Neither comparison
-path can modify the trusted Action Pack. Future desktop or provider-enriched
-Action Pack modes must document their real execution location and network path.
+PDF bytes never enter a provider request. Hosted requests contain the approved
+logical passages and cross the PaperWork gateway before the selected provider.
+An Ollama request goes directly from an HTTP loopback page to the exact
+consented HTTP loopback Ollama origin and bypasses the gateway. There is no
+hidden fallback provider or multi-provider fan-out. A valid citation proves
+source-location integrity, not that the model's interpretation is correct.
 
-## Implemented v1 domain contracts
+The hosted document-agent route remains loopback-development-only. A public
+asset deployment without an approved configured analysis engine fails closed;
+public hosted inference still requires authentication, distributed quotas,
+replay protection, secret management, and spend controls.
+
+## Legacy retained architecture
+
+`core/action-pack/v1/trusted-assembler.ts`, `core/action-pack/v1`,
+`core/model-council/v1`, and `app/model-council.tsx` describe the earlier
+zero-transfer deterministic Action Pack and seven-field offer comparison. They
+remain useful test and design history, but `TrustedActionPackV1` is not the
+current model-reviewed webpage contract.
+
+## Retained v1 Action Pack contracts
 
 The `core/action-pack/v1` module keeps transport and provider details outside
 the evidence model and rejects malformed or over-privileged data at runtime.
@@ -177,7 +173,7 @@ trusted local assembler + final authority gate
 TrustedActionPackV1 -> renderable domain data
 ```
 
-The current model council may propose only seven typed, nullable offer-letter
+The retained model council may propose only seven typed, nullable offer-letter
 fields with exact evidence: role, acceptance deadline, start date, annual base
 salary, work location, probation, and a source-stated action requirement. It
 cannot author a summary, arbitrary claims, actions, questions, canonical source
@@ -227,7 +223,7 @@ Later schema changes require explicit migration followed by full revalidation.
 External knowledge, if later supported, must be opt-in and cited separately
 from user-supplied material.
 
-## Implemented optional provider-comparison boundary
+## Retained provider-comparison boundary
 
 Provider adapters accept only an explicit, reviewable payload and return one
 versioned structured response. Before a request, the UI displays:
@@ -245,7 +241,7 @@ versioned structured response. Before a request, the UI displays:
 
 Provider output is untrusted. It is rendered as escaped React text in a
 separate tab and cannot execute tools, change privacy settings, create external
-requests, modify the trusted local plan, or bypass citation validation. Model
+requests, modify its retained trusted local plan, or bypass citation validation. Model
 agreement is a deterministic comparison of identical normalized values, never
 a truth vote.
 
@@ -307,10 +303,10 @@ core/          versioned source, claim, action, and receipt schemas
 ingestion/     file/link admission policies and safe adapters
 extractors/    isolated PDF, office, image, and OCR implementations
 providers/     explicit model/provider adapters
-analysis/      document routing and structured Action Pack generation
+analysis/      document routing and structured document-report generation
 validation/    citations, unsupported claims, conflicts, and policy checks
 receipts/      event collection and human/machine-readable projections
-ui/            source review, payload consent, evidence viewer, and Action Pack
+ui/            source review, payload consent, evidence viewer, and document view
 evals/         citation, extraction, injection, privacy, and regression suites
 ```
 

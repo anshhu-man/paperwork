@@ -85,7 +85,10 @@ const DEFINITIONS: readonly ProviderDefinitionV1[] = [
 ] as const;
 
 function isEnabled(environment: NodeJS.ProcessEnv) {
-  if (environment.PAPERWORK_MODEL_COUNCIL_ENABLED !== 'true') return false;
+  if (
+    environment.PAPERWORK_MODEL_COUNCIL_ENABLED !== 'true'
+    && environment.PAPERWORK_DOCUMENT_AGENT_ENABLED !== 'true'
+  ) return false;
   // A public origin is not an authentication or quota boundary. Hosted model
   // calls remain impossible in production until PaperWork has real per-user
   // authorization, distributed quotas, replay protection and spend caps.
